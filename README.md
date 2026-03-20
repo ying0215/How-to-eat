@@ -1,50 +1,66 @@
-# Welcome to your Expo app 👋
+# 🍽️ 今天吃什麼 — How-to-eat Mobile App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> 一款協助使用者決定「今天吃什麼」的行動應用程式，每日從最愛清單輪替推薦餐廳，並支援 GPS 附近餐廳搜尋。
 
-## Get started
+## 技術棧
 
-1. Install dependencies
+- **框架**：React Native + Expo SDK 54
+- **路由**：Expo Router（File-based routing）
+- **語言**：TypeScript
+- **狀態管理**：Zustand + persist middleware
+- **附近搜尋**：Google Places API (New) — Nearby Search
+- **雲端同步**：Google Drive REST API v3（appDataFolder）
+- **認證**：Google OAuth 2.0（expo-auth-session + PKCE）
 
-   ```bash
-   npm install
-   ```
+## 快速開始
 
-2. Start the app
+### 環境需求
 
-   ```bash
-   npx expo start
-   ```
+- Node.js 18+
+- npm 9+
+- Expo CLI（`npx expo`）
 
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+### 安裝與啟動
 
 ```bash
-npm run reset-project
+# 1. 安裝依賴
+npm install
+
+# 2. 建立環境變數檔（選填）
+cp .env.example .env
+# 編輯 .env 填入 Google API Key 與 Client ID
+
+# 3. 啟動開發伺服器
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### 環境變數
 
-## Learn more
+| 變數名稱 | 說明 | 必要 |
+|----------|------|:---:|
+| `EXPO_PUBLIC_GOOGLE_PLACES_API_KEY` | Google Places API Key（附近餐廳搜尋） | 否（未設定則降級 Mock 資料） |
+| `EXPO_PUBLIC_GOOGLE_CLIENT_ID` | Google OAuth 2.0 Client ID | 否（未設定則停用雲端同步） |
+| `EXPO_PUBLIC_GOOGLE_MAPS_SCHEME` | Google Maps URL Scheme | 否 |
 
-To learn more about developing your project with Expo, look at the following resources:
+> 即使不設定任何環境變數，App 也可正常運行（Mock 模式 + 本地存儲）。
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## 主要功能
 
-## Join the community
+| 頁面 | 功能 |
+|------|------|
+| 🏠 **首頁** | App 入口，提供「隨機抽取」與「找最近的」兩個功能入口 |
+| 🎲 **最愛抽獎** | 從最愛清單中每日輪替推薦餐廳，支援新增、跳過、刪除 |
+| 📍 **附近美食** | 依 GPS + 分類篩選列出附近餐廳，支援導航與加入最愛 |
+| ❤️ **最愛清單** | 管理已收藏的餐廳，可拖曳排序、刪除 |
+| ⚙️ **偏好設定** | 交通方式、最高交通時間、Google 雲端同步管理 |
 
-Join our community of developers creating universal apps.
+## 架構文件
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — 系統架構、模組職責與核心資料流
+- [PAGE_SPEC.md](./PAGE_SPEC.md) — 前端頁面 UI 詳細規格（按鈕、組件、導航）
+
+## 測試
+
+```bash
+npx jest --passWithNoTests
+```

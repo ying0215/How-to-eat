@@ -1,0 +1,69 @@
+# ============================================================================
+# 🚀 GitHub Pages 自動部署 — Expo Web Static Export
+# ============================================================================
+#
+# 每次 push 到 main 分支時自動執行：
+#   1. 安裝 Node.js + 專案依賴
+#   2. npx expo export --platform web → 產生靜態檔案至 dist/
+#   3. 部署 dist/ 到 GitHub Pages
+#
+# 部署後網址：https://ying0215.github.io/How-to-eat/
+# ============================================================================
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # 允許手動觸發
+  workflow_dispatch:
+
+# 設定 GITHUB_TOKEN 的權限，允許部署到 Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 避免同時部署衝突
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🏗️ Build Expo Web (static export)
+        run: npx expo export --platform web
+        env:
+          # 若需要在部署版啟用 Google API，在 GitHub repo Settings → Secrets 中設定以下變數
+          EXPO_PUBLIC_GOOGLE_PLACES_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY }}
+          EXPO_PUBLIC_GOOGLE_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_CLIENT_ID }}
+
+      - name: 📄 Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 🚀 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

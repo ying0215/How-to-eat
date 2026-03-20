@@ -1,0 +1,321 @@
+// ============================================================================
+// 📁 GoogleDriveAdapter.ts — Google Drive REST API v3 封裝
+// ============================================================================
+//
+// 職責：封裝所有 Google Drive 檔案操作，屏蔽底層 REST API 細節。
+//
+// 設計原則：
+//   1. 每個方法都是無狀態的純函式（接收 token，回傳結果）
+//   2. 所有操作限制在 appDataFolder scope 內
+//   3. 完整的錯誤處理與重試邏輯
+//   4. JSON 序列化/反序列化在此層處理
+//
+// API 參考：
+//   https://developers.google.com/drive/api/v3/reference
+// ============================================================================
+
+import {
+    GOOGLE_DRIVE_API_BASE,
+    GOOGLE_DRIVE_UPLOAD_BASE,
+    DRIVE_FAVORITES_FILENAME,
+} from '../auth/googleConfig';
+import type { SyncableFavoriteState } from './mergeStrategy';
+
+// ---------------------------------------------------------------------------
+// 🔧 HTTP 工具
+// ---------------------------------------------------------------------------
+
+/**
+ * 帶有自動重試的 fetch 封裝。
+ *
+ * 針對暫時性錯誤（5xx、網路超時）自動重試，指數退避 (exponential backoff)。
+ * 對於 4xx 錯誤（client error）不重試，直接拋出。
+ *
+ * @param url 請求 URL
+ * @param options fetch 選項
+ * @param maxRetries 最大重試次數（預設 3）
+ * @returns Response 物件
+ * @throws 超過最大重試次數或遇到不可重試錯誤時拋出
+ */
+async function fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    maxRetries: number = 3,
+): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch(url, options);
+
+            // 2xx: 成功
+            if (response.ok) return response;
+
+            // 4xx: client error，不重試（通常是 token 過期或權限不足）
+            if (response.status >= 400 && response.status < 500) {
+                const errBody = await response.text();
+                throw new DriveApiError(
+                    `Drive API ${response.status}: ${errBody}`,
+                    response.status,
+                    false, // 不可重試
+                );
+            }
+
+            // 5xx: server error，可重試
+            if (attempt < maxRetries) {
+                const backoffMs = Math.pow(2, attempt) * 500 + Math.random() * 200;
+                await sleep(backoffMs);
+                continue;
+            }
+
+            const errBody = await response.text();
+            throw new DriveApiError(
+                `Drive API ${response.status} after ${maxRetries} retries: ${errBody}`,
+                response.status,
+                true,
+            );
+        } catch (err) {
+            if (err instanceof DriveApiError) throw err;
+
+            // 網路錯誤（斷線、DNS 失敗等），可重試
+            lastError = err instanceof Error ? err : new Error(String(err));
+            if (attempt < maxRetries) {
+                const backoffMs = Math.pow(2, attempt) * 500 + Math.random() * 200;
+                await sleep(backoffMs);
+                continue;
+            }
+        }
+    }
+
+    throw new DriveApiError(
+        `Network error after ${maxRetries} retries: ${lastError?.message ?? 'Unknown'}`,
+        0,
+        true,
+    );
+}
+
+/** Promise-based sleep */
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// ❌ 自訂錯誤類別
+// ---------------------------------------------------------------------------
+
+/**
+ * Google Drive API 操作專用錯誤類別。
+ *
+ * 攜帶 HTTP status code 和是否可重試的資訊，
+ * 讓上層（SyncOrchestrator）能根據錯誤類型做不同決策。
+ */
+export class DriveApiError extends Error {
+    constructor(
+        message: string,
+        /** HTTP 狀態碼（0 表示網路層錯誤） */
+        public readonly statusCode: number,
+        /** 此錯誤是否屬於暫時性、可重試的 */
+        public readonly retryable: boolean,
+        /** 是否需要重新授權（403 時為 true，表示 token 可能過期或權限不足） */
+        public readonly requiresReauth: boolean = statusCode === 403,
+    ) {
+        super(message);
+        this.name = 'DriveApiError';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 📂 Drive File 操作
+// ---------------------------------------------------------------------------
+
+/** Google Drive 檔案搜尋回應中的單一檔案物件 */
+interface DriveFile {
+    id: string;
+    name: string;
+    modifiedTime: string;
+}
+
+/**
+ * 在 appDataFolder 中搜尋指定名稱的檔案。
+ *
+ * appDataFolder 是每個 App 在使用者 Drive 中的隱藏空間，
+ * 不同 App 之間互相看不到彼此的 appDataFolder 內容。
+ *
+ * @param token 有效的 Google OAuth access token
+ * @returns 找到的檔案 metadata，或 null（不存在時）
+ */
+export async function findFavoritesFile(
+    token: string,
+): Promise<DriveFile | null> {
+    const query = encodeURIComponent(`name = '${DRIVE_FAVORITES_FILENAME}'`);
+    const url =
+        `${GOOGLE_DRIVE_API_BASE}/files?` +
+        `spaces=appDataFolder&q=${query}&fields=files(id,name,modifiedTime)&pageSize=1`;
+
+    const response = await fetchWithRetry(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const data = await response.json();
+    const files = (data.files ?? []) as DriveFile[];
+    return files.length > 0 ? files[0] : null;
+}
+
+/**
+ * 從 Google Drive 下載最愛餐廳資料。
+ *
+ * 流程：
+ *   1. 先用 findFavoritesFile() 找到檔案 ID
+ *   2. 用 ?alt=media 下載檔案實際內容
+ *   3. Parse JSON 為 SyncableFavoriteState
+ *
+ * @param token 有效的 Google OAuth access token
+ * @returns 解析後的 SyncableFavoriteState，或 null（檔案不存在時）
+ */
+export async function downloadFavorites(
+    token: string,
+): Promise<SyncableFavoriteState | null> {
+    const file = await findFavoritesFile(token);
+    if (!file) return null;
+
+    const url = `${GOOGLE_DRIVE_API_BASE}/files/${file.id}?alt=media`;
+    const response = await fetchWithRetry(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const text = await response.text();
+    if (!text || text.trim().length === 0) return null;
+
+    try {
+        const parsed = JSON.parse(text) as SyncableFavoriteState;
+
+        // 基礎資料完整性校驗
+        if (!Array.isArray(parsed.favorites) || !Array.isArray(parsed.queue)) {
+            console.warn('[GoogleDrive] Downloaded data has invalid structure, ignoring.');
+            return null;
+        }
+
+        return parsed;
+    } catch (parseErr) {
+        console.warn('[GoogleDrive] Failed to parse downloaded JSON:', parseErr);
+        return null;
+    }
+}
+
+/**
+ * 將最愛餐廳資料上傳到 Google Drive appDataFolder。
+ *
+ * 使用 multipart upload：
+ *   Part 1: metadata JSON（檔名、parent）
+ *   Part 2: 實際檔案內容 JSON
+ *
+ * 如果檔案已存在，使用 PATCH 更新；否則用 POST 建立新檔案。
+ *
+ * @param token 有效的 Google OAuth access token
+ * @param state 要上傳的最愛餐廳資料
+ * @returns 上傳成功後的檔案 ID
+ */
+export async function uploadFavorites(
+    token: string,
+    state: SyncableFavoriteState,
+): Promise<string> {
+    const existingFile = await findFavoritesFile(token);
+    const jsonContent = JSON.stringify(state, null, 2);
+
+    if (existingFile) {
+        // ── 更新既有檔案 ──
+        // 使用 simple upload (uploadType=media) 直接覆蓋檔案內容
+        const url = `${GOOGLE_DRIVE_UPLOAD_BASE}/files/${existingFile.id}?uploadType=media`;
+        const response = await fetchWithRetry(url, {
+            method: 'PATCH',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: jsonContent,
+        });
+
+        const result = await response.json();
+        return result.id as string;
+    } else {
+        // ── 建立新檔案 ──
+        // 使用 multipart upload 同時傳送 metadata 和 content
+        const boundary = '---how_to_eat_boundary_' + Date.now();
+        const metadata = JSON.stringify({
+            name: DRIVE_FAVORITES_FILENAME,
+            parents: ['appDataFolder'],
+            mimeType: 'application/json',
+        });
+
+        // 手動組裝 multipart body（React Native 的 FormData 與 Google API 不完全相容）
+        const multipartBody =
+            `--${boundary}\r\n` +
+            `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+            `${metadata}\r\n` +
+            `--${boundary}\r\n` +
+            `Content-Type: application/json\r\n\r\n` +
+            `${jsonContent}\r\n` +
+            `--${boundary}--`;
+
+        const url = `${GOOGLE_DRIVE_UPLOAD_BASE}/files?uploadType=multipart`;
+        const response = await fetchWithRetry(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': `multipart/related; boundary=${boundary}`,
+            },
+            body: multipartBody,
+        });
+
+        const result = await response.json();
+        return result.id as string;
+    }
+}
+
+/**
+ * 刪除 Google Drive appDataFolder 中的最愛餐廳檔案。
+ *
+ * 用於使用者選擇「取消連結」時清除雲端資料。
+ *
+ * @param token 有效的 Google OAuth access token
+ * @returns true 表示刪除成功（或檔案本來就不存在）
+ */
+export async function deleteFavoritesFile(token: string): Promise<boolean> {
+    const file = await findFavoritesFile(token);
+    if (!file) return true; // 檔案不存在，視為成功
+
+    const url = `${GOOGLE_DRIVE_API_BASE}/files/${file.id}`;
+    await fetchWithRetry(url, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+    });
+
+    return true;
+}
+
+/**
+ * 檢查 Google Drive API 連通性。
+ *
+ * 用一個輕量級的 about API call 確認 token 有效且 Drive API 可達。
+ *
+ * @param token 有效的 Google OAuth access token
+ * @returns true 表示連通成功
+ */
+export async function checkDriveConnectivity(token: string): Promise<boolean> {
+    try {
+        const url = `${GOOGLE_DRIVE_API_BASE}/about?fields=user(emailAddress)`;
+        const response = await fetchWithRetry(
+            url,
+            {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+            },
+            1, // 只重試 1 次
+        );
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
