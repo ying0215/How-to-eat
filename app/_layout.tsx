@@ -50,6 +50,7 @@ import { StatusBar } from 'expo-status-bar';
 //   它會偵測使用者手機的系統設定（設定 → 顯示 → 深色模式）。
 // 💡 這是一個 Hook，代表當使用者在系統切換深淺色時，元件會自動「重新渲染」。
 import { useColorScheme, Platform } from 'react-native';
+import { useEffect } from 'react';
 
 // 🔤 字型載入
 // useFonts：Expo 提供的 Hook，用於非同步載入自訂字型（包含 Icon 字型）。
@@ -149,6 +150,33 @@ export default function RootLayout() {
     return null;
   }
 
+  // 🛡️ Web Pointer-Events 修復（透過全域 CSS）
+  // React Navigation 預設將 Stack 的 content container 設為 pointer-events: none，
+  // 這在 React Native 中是 'box-none'（容器不接受觸控，子元素可以），
+  // 但 react-native-web 錯誤地將其映射為 CSS pointer-events: none（完全阻斷觸控）。
+  //
+  // 之前的修法是 contentStyle: { pointerEvents: 'auto' }，但 react-native-web 會將
+  // pointerEvents 當成 deprecated prop 處理（而非 style），產生 console 警告。
+  //
+  // 改用全域 CSS 注入可直接覆蓋 DOM 層的 pointer-events: none，
+  // 完全繞過 react-native-web 的 prop 警告機制。
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const styleEl = document.createElement('style');
+    styleEl.setAttribute('data-fix', 'rn-pointer-events');
+    styleEl.textContent = [
+      '/* Fix: Override React Navigation\'s pointer-events: none on Web */',
+      '/* RN\'s box-none is incorrectly mapped to CSS none by react-native-web */',
+      '[style*="pointer-events: none"] { pointer-events: auto !important; }',
+    ].join('\n');
+    document.head.appendChild(styleEl);
+
+    return () => {
+      document.head.removeChild(styleEl);
+    };
+  }, []);
+
   return (
     // 🧤 第 1 層：手勢根容器
     // style={{ flex: 1 }} 讓容器佔滿整個螢幕。
@@ -167,13 +195,8 @@ export default function RootLayout() {
           {/* 防止 Web 上的 pointer-events: none 阻擋子元素互動 */}
           <Stack
             screenOptions={{
-              // 🛡️ 修復 Web 上 Pressable/TouchableOpacity 無法點擊的問題：
-              //   React Navigation 預設將 contentStyle.pointerEvents 設為 'box-none'。
-              //   在 React Native 中，'box-none' 代表「容器不接受觸控，但子元素可以」。
-              //   但 react-native-web 將其錯誤地轉譯為 CSS pointer-events: none，
-              //   導致**整個頁面內容區域**（包含子元素）都無法接收任何點擊事件。
-              //   強制設為 'auto' 可修復此問題，確保所有 Pressable、按鈕、開關等元件正常運作。
-              contentStyle: { pointerEvents: 'auto' },
+              // 🛡️ Web 上的 pointer-events 修復已移至全域 CSS 注入（上方 useEffect）
+              // 避免 react-native-web 的 props.pointerEvents deprecation warning
             }}
           >
             {/* 📄 index 頁面（app/index.tsx） */}

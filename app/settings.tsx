@@ -140,6 +140,9 @@ export default function SettingsScreen() {
     };
 
     const handleGoogleConnect = async () => {
+        // 防止 OAuth 進行中重複觸發（避免多個 popup 產生 COOP 警告洗版）
+        if (authLoading) return;
+
         if (isSignedIn) {
             if (Platform.OS === 'web') {
                 // Web 上 Alert.alert 是 no-op，改用 window.confirm
