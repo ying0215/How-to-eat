@@ -16,7 +16,7 @@
 //
 // 結構（對齊 Spec）：
 // ┌─────────────────────────────────┐
-// │  [佇列號碼]  餐廳名稱       ❤️  │
+// │  [佇列號碼]  餐廳名稱  [休息] ❤️│
 // │             分類 · ⭐ 評分      │
 // │─────────────────────────────────│
 // │  📍 距離 xxx m                  │
@@ -27,7 +27,7 @@
 // ============================================================
 
 import React, { useCallback, useState } from 'react';
-import { Platform, View, Text, StyleSheet, Image, Pressable } from 'react-native';
+import { Platform, View, Text, StyleSheet, Pressable } from 'react-native';
 import { Card } from '../common/Card';
 import { theme } from '../../constants/theme';
 import { Restaurant } from '../../types/models';
@@ -131,8 +131,6 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
     queueIndex,
     onPress,
 }) => {
-    const [imageError, setImageError] = useState(false);
-    const showImage = !!restaurant.imageUrl && !imageError;
     const transportMode = useUserStore((s) => s.transportMode);
 
     const handleCardPress = useCallback(() => {
@@ -147,32 +145,9 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
             accessibilityLabel={a11yLabel}
         >
             <Card style={styles.cardContainer}>
-                {/* ── 圖片區塊 ── */}
-                <View style={styles.imageContainer}>
-                    {showImage ? (
-                        <Image
-                            source={{ uri: restaurant.imageUrl }}
-                            style={styles.image}
-                            resizeMode="cover"
-                            onError={() => setImageError(true)}
-                        />
-                    ) : (
-                        <View style={styles.placeholderImage}>
-                            <Ionicons name="restaurant-outline" size={40} color={theme.colors.textSecondary} />
-                        </View>
-                    )}
-
-                    {/* 休息中 Badge */}
-                    {!restaurant.isOpenNow && (
-                        <View style={styles.closedBadge}>
-                            <Text style={styles.closedText}>目前休息中</Text>
-                        </View>
-                    )}
-                </View>
-
                 {/* ── 資訊區塊 ── */}
                 <View style={styles.infoContainer}>
-                    {/* 標題列：[佇列號碼] 餐廳名稱 ❤️ */}
+                    {/* 標題列：[佇列號碼] 餐廳名稱 [休息中] ❤️ */}
                     <View style={styles.headerRow}>
                         {showQueue && queueIndex != null && (
                             <View style={styles.queueBadge}>
@@ -182,6 +157,13 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                         <Text style={styles.name} numberOfLines={1}>
                             {restaurant.name}
                         </Text>
+
+                        {/* 休息中 Badge（內嵌於標題列） */}
+                        {!restaurant.isOpenNow && (
+                            <View style={styles.closedBadge}>
+                                <Text style={styles.closedText}>休息中</Text>
+                            </View>
+                        )}
 
                         {/* ❤️ 最愛 Toggle */}
                         {onToggleFavorite && (
@@ -265,34 +247,17 @@ const styles = StyleSheet.create({
         padding: 0,
         overflow: 'hidden',
     },
-    // ── 圖片 ──
-    imageContainer: {
-        position: 'relative',
-    },
-    image: {
-        width: '100%',
-        height: 150,
-        backgroundColor: theme.colors.placeholder,
-    },
-    placeholderImage: {
-        width: '100%',
-        height: 150,
-        backgroundColor: theme.colors.placeholder,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
+    // ── 休息中 Badge（改為內嵌行內樣式）──
     closedBadge: {
-        position: 'absolute',
-        top: 12,
-        right: 12,
         backgroundColor: theme.colors.error + 'E6',
         paddingHorizontal: 8,
-        paddingVertical: 4,
+        paddingVertical: 2,
         borderRadius: theme.borderRadius.sm,
     },
     closedText: {
         color: theme.colors.onPrimary,
         ...theme.typography.caption,
+        fontSize: 11,
         fontWeight: 'bold',
     },
     // ── 資訊 ──
