@@ -576,11 +576,31 @@ export function useGoogleAuth() {
 
     // ── Redirect URI ──
     // expo-auth-session 會根據平台自動選擇適合的 redirect URI。
-    // Web: 使用當前域名
+    // Web: 使用當前域名（需特別處理 GitHub Pages 子路徑）
     // Native: 使用 Expo proxy 或 custom scheme
-    const redirectUri = AuthSession.makeRedirectUri({
-        scheme: 'mobile',
-    });
+    //
+    // ⚠️ GitHub Pages 部署修正：
+    //   AuthSession.makeRedirectUri() 在 GitHub Pages 上只會產生
+    //   https://ying0215.github.io（根路徑），但 App 實際部署在
+    //   /How-to-eat/ 子路徑下。Google OAuth 回調後會導向根路徑，
+    //   造成 404 頁面。
+    //   修正方式：在 Web 上使用 window.location.origin + baseUrl 作為 redirect URI。
+    const redirectUri = Platform.OS === 'web'
+        ? (() => {
+            // 使用當前頁面的 origin + pathname 作為 redirect URI
+            // 例如：https://ying0215.github.io/How-to-eat/
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+            // 取得 base path（例如 /How-to-eat/），去掉多餘的子路徑
+            // pathname 可能是 /How-to-eat/ 或 /How-to-eat/settings 等
+            const basePath = pathname.split('/').slice(0, 2).join('/'); // → /How-to-eat
+            const uri = origin + (basePath === '/' ? '' : basePath) + '/';
+            console.info('[useGoogleAuth] Web redirectUri:', uri);
+            return uri;
+        })()
+        : AuthSession.makeRedirectUri({
+            scheme: 'mobile',
+        });
 
     // ── Auth Request ──
     const [request, , promptAsync] = AuthSession.useAuthRequest(
