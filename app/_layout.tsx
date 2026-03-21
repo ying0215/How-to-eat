@@ -138,25 +138,19 @@ export default function RootLayout() {
 
   // ☁️ Google 雲端同步初始化
   // getValidToken 提供有效的 access token（自動刷新過期 token）
-  // useSyncOrchestrator 監聽 FavoriteStore 變化，debounce 後自動同步
+  // useSyncOrchestrator 監聯 FavoriteStore 變化，debounce 後自動同步
   const { getValidToken } = useGoogleAuth();
   useSyncOrchestrator(getValidToken);
 
-  // ⏳ 字型尚未載入完成時，不渲染任何內容
-  // 💡 這個短暫的空白期通常只有幾十毫秒，使用者幾乎感覺不到
-  // ❌ 如果不做這個檢查：UI 會先渲染出來但圖示是空白的，
-  //    然後字型載入完成後突然跳出來，造成「閃爍」（FOIT - Flash of Invisible Text）
-  if (!fontsLoaded) {
-    return null;
-  }
-
   // 🛡️ Web Pointer-Events 修復（透過全域 CSS）
+  // ⚠️ 此 useEffect 必須放在「if (!fontsLoaded) return null」之前！
+  //    React 的 Rules of Hooks 要求每次渲染呼叫的 hooks 數量與順序完全一致。
+  //    如果放在 early return 之後，首次渲染（fontsLoaded=false）不會呼叫到它，
+  //    第二次渲染（fontsLoaded=true）才呼叫，導致 hooks 數量不一致而報錯。
+  //
   // React Navigation 預設將 Stack 的 content container 設為 pointer-events: none，
   // 這在 React Native 中是 'box-none'（容器不接受觸控，子元素可以），
   // 但 react-native-web 錯誤地將其映射為 CSS pointer-events: none（完全阻斷觸控）。
-  //
-  // 之前的修法是 contentStyle: { pointerEvents: 'auto' }，但 react-native-web 會將
-  // pointerEvents 當成 deprecated prop 處理（而非 style），產生 console 警告。
   //
   // 改用全域 CSS 注入可直接覆蓋 DOM 層的 pointer-events: none，
   // 完全繞過 react-native-web 的 prop 警告機制。
@@ -176,6 +170,14 @@ export default function RootLayout() {
       document.head.removeChild(styleEl);
     };
   }, []);
+
+  // ⏳ 字型尚未載入完成時，不渲染任何內容
+  // 💡 這個短暫的空白期通常只有幾十毫秒，使用者幾乎感覺不到
+  // ❌ 如果不做這個檢查：UI 會先渲染出來但圖示是空白的，
+  //    然後字型載入完成後突然跳出來，造成「閃爍」（FOIT - Flash of Invisible Text）
+  if (!fontsLoaded) {
+    return null;
+  }
 
   return (
     // 🧤 第 1 層：手勢根容器

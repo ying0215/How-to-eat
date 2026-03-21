@@ -8,9 +8,9 @@
 //     原因：expo-location 在 Web 端是對 navigator.geolocation 的封裝，
 //     但在某些 Expo 版本中封裝層有 Bug（Permission API 不一致、timeout 處理異常），
 //     直接呼叫原生 API 更可靠，也跟 Google Maps 網頁版使用相同的定位管道。
-//   - 若權限被拒、定位失敗或逾時，自動回退到預設座標（臺北市中心）
+//   - 若權限被拒、定位失敗或逾時，自動回退到預設座標（高雄市中心）
 //
-// 🗺️ Fallback 座標：台北車站附近（25.0330, 121.5654）
+// 🗺️ Fallback 座標：高雄美麗島站附近（22.6273, 120.3014）
 // ============================================================================
 
 import { useState, useEffect, useRef } from 'react';
@@ -27,8 +27,8 @@ interface LocationData {
     isFallback: boolean;
 }
 
-/** 台北市中心假座標（開發用 Fallback / 權限被拒時的預設值） */
-const FALLBACK_COORDS = { latitude: 25.0330, longitude: 121.5654 };
+/** 高雄市中心假座標（開發用 Fallback / 權限被拒時的預設值） */
+const FALLBACK_COORDS = { latitude: 22.6273, longitude: 120.3014 };
 
 /** 定位取得的最大等待時間（毫秒） */
 const LOCATION_TIMEOUT_MS = 10_000;
@@ -56,7 +56,7 @@ export const useLocation = () => {
         console.warn(`[useLocation] ${reason}, using fallback coordinates.`);
         safeSetLocation({
             ...FALLBACK_COORDS,
-            error: `${reason}（使用預設位置：臺北市中心）`,
+            error: `${reason}（使用預設位置：高雄市中心）`,
             loading: false,
             isFallback: true,
         });

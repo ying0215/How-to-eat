@@ -32,6 +32,7 @@ import {
     GOOGLE_DRIVE_SCOPES,
     GOOGLE_DISCOVERY_DOC_URL,
     isGoogleConfigured,
+    isExpoGo,
 } from './googleConfig';
 import {
     handleOAuthCallback,
@@ -577,7 +578,8 @@ export function useGoogleAuth() {
     // ── Redirect URI ──
     // expo-auth-session 會根據平台自動選擇適合的 redirect URI。
     // Web: 使用當前域名（需特別處理 GitHub Pages 子路徑）
-    // Native: 使用 Expo proxy 或 custom scheme
+    // Native (Expo Go): 使用 Expo Auth Proxy（HTTPS redirect，繞過 custom scheme 限制）
+    // Native (獨立 Build): 使用 custom scheme (mobile://)
     //
     // ⚠️ GitHub Pages 部署修正：
     //   AuthSession.makeRedirectUri() 在 GitHub Pages 上只會產生
@@ -608,9 +610,18 @@ export function useGoogleAuth() {
             console.info('[useGoogleAuth] Web redirectUri:', uri);
             return uri;
         })()
-        : AuthSession.makeRedirectUri({
-            scheme: 'mobile',
-        });
+        : isExpoGo
+            // 📱 Expo Go：OAuth redirect 無法運作（auth.expo.io proxy 已棄用）
+            // 仍然產生 redirect URI 以避免 useAuthRequest crash，
+            // 但 signIn() 會提前放置並顯示錯誤訊息
+            ? (() => {
+                console.warn('[useGoogleAuth] Expo Go 不支援 OAuth，請使用 Development Build 或 APK');
+                return AuthSession.makeRedirectUri({ scheme: 'mobile' });
+            })()
+            // 📱 獨立 Build（APK/IPA）：使用 custom scheme
+            : AuthSession.makeRedirectUri({
+                scheme: 'mobile',
+            });
 
     // ── Auth Request ──
     const [request, , promptAsync] = AuthSession.useAuthRequest(
@@ -691,6 +702,19 @@ export function useGoogleAuth() {
 
         if (!isGoogleConfigured()) {
             store._setError('Google Client ID 尚未設定。請在 .env 中設置 EXPO_PUBLIC_GOOGLE_CLIENT_ID。');
+            return;
+        }
+
+        // ── Expo Go 限制：OAuth 不可用 ──
+        // Expo Auth Proxy (auth.expo.io) 已在 SDK 48+ 關閉。
+        // Expo Go 無法攔截 custom scheme redirect，導致 OAuth 永遠無法完成。
+        // 需改用 Development Build 或安裝 APK 來測試 OAuth 功能。
+        if (isExpoGo) {
+            store._setError(
+                '⚠️ Expo Go 不支援 Google 登入。\n' +
+                '請安裝 APK（EAS Build）或使用 Development Build 來測試 Google 同步功能。\n' +
+                '其他功能（附近美食、最愛清單）仍可在 Expo Go 中正常使用。'
+            );
             return;
         }
 

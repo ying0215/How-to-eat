@@ -41,6 +41,47 @@ function detectPlatformOS(): string {
 const CURRENT_PLATFORM = detectPlatformOS();
 
 // ---------------------------------------------------------------------------
+// 📱 Expo Go 偵測
+// ---------------------------------------------------------------------------
+// Expo Go 是 Expo 提供的通用開發 App，使用時 package name 是 host.exp.exponent。
+// 這會導致：
+//   1. API Key 的 Android 限制不認得此 package name → Places API 403
+//   2. 自訂 scheme (mobile://) 無法被 Expo Go 攔截 → OAuth redirect 失敗
+// 
+// 解法：在 Expo Go 中，OAuth 改走 Expo Auth Proxy（HTTPS redirect URI），
+// 因此必須使用 Web Application 類型的 OAuth Client（需要 client_id + client_secret）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 偵測當前是否在 Expo Go 中運行。
+ * 
+ * Constants.appOwnership 的值：
+ *   - 'expo' = Expo Go（通用開發 App）
+ *   - 'standalone' = 獨立 APK/IPA（EAS Build 產出）
+ *   - 'guest' = Expo Go 中的 Guest 模式
+ *   - undefined = Web 或無法判斷
+ */
+function detectIsExpoGo(): boolean {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const Constants = require('expo-constants').default;
+        return Constants.appOwnership === 'expo';
+    } catch {
+        return false;
+    }
+}
+
+/** 是否在 Expo Go 環境中運行 */
+export const isExpoGo: boolean = detectIsExpoGo();
+
+// ⚠️ Expo Auth Proxy (auth.expo.io) 已在 SDK 48+ 棄用並關閉。
+// Expo Go 中無法使用 Google OAuth，因為：
+//   1. Expo Go 無法攔截自訂 scheme (mobile://) 的 redirect
+//   2. Google OAuth 不接受 exp:// 格式的 redirect URI
+//   3. auth.expo.io proxy 已不再運作
+// 官方建議：使用 Development Build (eas build --profile development) 來測試 OAuth。
+
+// ---------------------------------------------------------------------------
 // 🔑 Platform-specific OAuth Client ID
 // ---------------------------------------------------------------------------
 // Web Application 類型 → EXPO_PUBLIC_GOOGLE_CLIENT_ID
