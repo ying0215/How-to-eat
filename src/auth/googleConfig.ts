@@ -10,32 +10,100 @@
 // ⚠️ 首次使用前，你必須：
 //    1. 前往 https://console.cloud.google.com/
 //    2. 建立專案，啟用 Google Drive API
-//    3. 建立 OAuth 2.0 Client ID（Authorized redirect URI 填入 Expo AuthSession proxy）
-//    4. 將 Client ID 填入 .env 的 EXPO_PUBLIC_GOOGLE_CLIENT_ID
+//    3. 建立 OAuth 2.0 Client ID：
+//       - Web Application 類型（用於 Web 平台）
+//       - Android 類型（用於 APK，需填入 package name + SHA-1 指紋）
+//    4. 將 Client ID 分別填入 .env：
+//       - EXPO_PUBLIC_GOOGLE_CLIENT_ID（Web）
+//       - EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID（Android）
 // ============================================================================
 
-/**
- * 從環境變數讀取 Google OAuth Client ID。
- *
- * Expo 慣例：以 EXPO_PUBLIC_ 前綴的環境變數會被自動注入到 client bundle 中。
- * 在 .env 中設置：EXPO_PUBLIC_GOOGLE_CLIENT_ID=xxxxxxxxxxxx.apps.googleusercontent.com
- *
- * 若未設定，googleClientId 為空字串，useGoogleAuth 會在初始化時偵測並跳過登入流程。
- */
-export const googleClientId: string =
+// ---------------------------------------------------------------------------
+// 🔧 Safe Platform Detection
+// ---------------------------------------------------------------------------
+// googleConfig.ts 會被 useGoogleAuth.ts / GoogleDriveAdapter.ts 引用，
+// 而測試環境使用 ts-jest（Node），無法直接 import react-native。
+// 因此使用安全的 runtime 偵測：先嘗試取得 Platform.OS，失敗則 fallback 為 'web'。
+// ---------------------------------------------------------------------------
+
+function detectPlatformOS(): string {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Platform } = require('react-native');
+        return Platform.OS ?? 'web';
+    } catch {
+        // Node.js / Jest 環境下 react-native 不可用，fallback 為 'web'
+        return 'web';
+    }
+}
+
+/** 當前平台識別碼（'web' | 'android' | 'ios'） */
+const CURRENT_PLATFORM = detectPlatformOS();
+
+// ---------------------------------------------------------------------------
+// 🔑 Platform-specific OAuth Client ID
+// ---------------------------------------------------------------------------
+// Web Application 類型 → EXPO_PUBLIC_GOOGLE_CLIENT_ID
+//   - 需要 client_secret 進行 token exchange
+//   - 透過 HTTP Referrer 限制來源
+//
+// Android 類型 → EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID
+//   - 不需要 client_secret（靠 package name + SHA-1 簽名指紋驗證身份）
+//   - 在 Google Cloud Console 建立時填入 package name 與 SHA-1
+// ---------------------------------------------------------------------------
+
+/** Web 平台用的 OAuth Client ID（Web Application 類型） */
+const WEB_CLIENT_ID: string =
     process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
 
+/** Android 平台用的 OAuth Client ID（Android 類型） */
+const ANDROID_CLIENT_ID: string =
+    process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '';
+
 /**
- * Google OAuth Client Secret（Web Application 類型必須）。
+ * 根據當前平台自動選擇對應的 Google OAuth Client ID。
  *
- * ⚠️ 注意：Web Application 類型的 OAuth Client 在 token exchange 時需要 client_secret。
- * 在 .env 中設置：EXPO_PUBLIC_GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxx
+ * - Web → Web Application Client ID
+ * - Android → Android Client ID
+ * - iOS → 目前 fallback 到 Web Client ID（未來可擴充）
  *
- * 在正式生產環境中，client_secret 應由後端 proxy 持有，不暴露在前端。
+ * Expo 慣例：以 EXPO_PUBLIC_ 前綴的環境變數會被自動注入到 client bundle 中。
+ * 若未設定，googleClientId 為空字串，useGoogleAuth 會在初始化時偵測並跳過登入流程。
+ */
+function selectClientId(): string {
+    switch (CURRENT_PLATFORM) {
+        case 'android':
+            return ANDROID_CLIENT_ID || WEB_CLIENT_ID;  // fallback to Web if Android not set
+        case 'ios':
+            return WEB_CLIENT_ID;  // TODO: 建立 iOS Client ID 後替換
+        case 'web':
+        default:
+            return WEB_CLIENT_ID;
+    }
+}
+export const googleClientId: string = selectClientId();
+
+/**
+ * Google OAuth Client Secret（僅 Web Application 類型需要）。
+ *
+ * ⚠️ Android 類型的 OAuth Client 不需要 client_secret：
+ *    Android 靠 package name + SHA-1 signing certificate 驗證應用身份，
+ *    因此在 Android 平台上 client_secret 為空字串。
+ *
+ * ⚠️ 在正式生產環境中，Web 的 client_secret 應由後端 proxy 持有，不暴露在前端。
  * 目前開發階段直接使用，因權限範圍僅限 drive.appdata，風險可控。
  */
-export const googleClientSecret: string =
-    process.env.EXPO_PUBLIC_GOOGLE_CLIENT_SECRET ?? '';
+function selectClientSecret(): string {
+    switch (CURRENT_PLATFORM) {
+        case 'android':
+        case 'ios':
+            return '';  // Native OAuth Client 不需要 client_secret
+        case 'web':
+        default:
+            return process.env.EXPO_PUBLIC_GOOGLE_CLIENT_SECRET ?? '';
+    }
+}
+export const googleClientSecret: string = selectClientSecret();
 
 /**
  * Google OAuth 2.0 所需的授權範圍（Scopes）。

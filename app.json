@@ -12,6 +12,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.howtoeat.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -46,6 +47,12 @@
       "typedRoutes": true,
       "reactCompiler": true,
       "baseUrl": "/How-to-eat"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e131bd50-63c8-42ea-bfd1-4d099a0b6e66"
+      }
     }
   }
 }
