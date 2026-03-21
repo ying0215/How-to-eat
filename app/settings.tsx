@@ -270,8 +270,7 @@ export default function SettingsScreen() {
             <View style={styles.divider} />
 
             <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-                {/* Google 雲端同步（僅在已登入或未設定時顯示） */}
-                {(!isConfigured || isSignedIn) && (
+                {/* Google 雲端同步 */}
                 <View style={styles.section}>
                     <View style={styles.sectionHeader}>
                         <Ionicons name="cloud-outline" size={22} color={theme.colors.primary} />
@@ -284,7 +283,57 @@ export default function SettingsScreen() {
                                 Google 雲端同步功能尚未設定。{'\n'}請在 .env 中配置 EXPO_PUBLIC_GOOGLE_CLIENT_ID。
                             </Text>
                         </View>
+                    ) : !isSignedIn ? (
+                        /* ── 未登入：推廣 CTA ── */
+                        <View>
+                            <View style={syncStyles.promoBox}>
+                                <Ionicons name="cloud-done-outline" size={40} color={theme.colors.primary} style={{ marginBottom: theme.spacing.sm }} />
+                                <Text style={syncStyles.promoTitle}>跨裝置同步你的餐廳清單</Text>
+                                <Text style={syncStyles.promoDesc}>
+                                    連結 Google 帳號後，你的最愛餐廳會自動同步到雲端，{'\n'}換手機也不會遺失資料。
+                                </Text>
+                                <View style={syncStyles.promoFeatures}>
+                                    <View style={syncStyles.promoFeatureRow}>
+                                        <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                                        <Text style={syncStyles.promoFeatureText}>自動備份，資料不遺失</Text>
+                                    </View>
+                                    <View style={syncStyles.promoFeatureRow}>
+                                        <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                                        <Text style={syncStyles.promoFeatureText}>跨裝置同步，手機電腦都能用</Text>
+                                    </View>
+                                    <View style={syncStyles.promoFeatureRow}>
+                                        <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                                        <Text style={syncStyles.promoFeatureText}>使用 Google Drive 安全儲存</Text>
+                                    </View>
+                                </View>
+                            </View>
+                            {authError ? (
+                                <View style={syncStyles.errorBox}>
+                                    <Ionicons name="warning-outline" size={16} color={theme.colors.error} />
+                                    <Text style={syncStyles.errorText}>{authError}</Text>
+                                </View>
+                            ) : null}
+                            <Pressable
+                                onPress={handleGoogleConnect}
+                                disabled={authLoading}
+                                style={({ pressed }) => [
+                                    syncStyles.googleConnectBtn,
+                                    pressed && { opacity: 0.7 },
+                                    authLoading && { opacity: 0.5 },
+                                ]}
+                            >
+                                {authLoading ? (
+                                    <ActivityIndicator size="small" color={theme.colors.onPrimary} />
+                                ) : (
+                                    <Ionicons name="logo-google" size={20} color={theme.colors.onPrimary} />
+                                )}
+                                <Text style={syncStyles.googleConnectText}>
+                                    {authLoading ? '連結中…' : '連結 Google 帳號'}
+                                </Text>
+                            </Pressable>
+                        </View>
                     ) : (
+                        /* ── 已登入：完整同步管理面板 ── */
                         <View>
                             <View style={syncStyles.accountCard}>
                                 <Ionicons name="person-circle" size={44} color={theme.colors.primary} />
@@ -393,7 +442,6 @@ export default function SettingsScreen() {
                         </View>
                     )}
                 </View>
-                )}
 
                 {/* 交通方式 — 選擇模式 */}
                 <View style={styles.section}>
@@ -621,6 +669,55 @@ const syncStyles = StyleSheet.create({
         fontSize: 12,
         color: theme.colors.primary,
         fontWeight: '500',
+    },
+    // ── 未登入推廣 CTA 樣式 ──
+    promoBox: {
+        alignItems: 'center',
+        paddingVertical: theme.spacing.lg,
+        paddingHorizontal: theme.spacing.md,
+    },
+    promoTitle: {
+        ...theme.typography.h3,
+        color: theme.colors.text,
+        textAlign: 'center' as const,
+        marginBottom: theme.spacing.sm,
+    },
+    promoDesc: {
+        ...theme.typography.bodySmall,
+        color: theme.colors.textSecondary,
+        textAlign: 'center' as const,
+        lineHeight: 22,
+        marginBottom: theme.spacing.md,
+    },
+    promoFeatures: {
+        alignSelf: 'flex-start' as const,
+        gap: theme.spacing.sm,
+        width: '100%',
+    },
+    promoFeatureRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.spacing.sm,
+    },
+    promoFeatureText: {
+        ...theme.typography.bodySmall,
+        color: theme.colors.text,
+    },
+    googleConnectBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: theme.spacing.sm,
+        backgroundColor: '#4285F4',
+        paddingVertical: theme.spacing.md,
+        paddingHorizontal: theme.spacing.xl,
+        borderRadius: theme.borderRadius.md,
+        marginTop: theme.spacing.md,
+    },
+    googleConnectText: {
+        color: theme.colors.onPrimary,
+        ...theme.typography.body,
+        fontWeight: '600',
     },
 });
 

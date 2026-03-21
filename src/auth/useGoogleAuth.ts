@@ -5,15 +5,19 @@
 // 職責：管理 Google 帳號的登入/登出/token 刷新完整生命週期。
 //
 // 技術選型：
-//   使用 expo-auth-session 做 web-based OAuth，原因：
-//   1. 相容 Expo Go（不需要 development build）
-//   2. 跨平台一致性（Web / iOS / Android 同一套程式碼）
-//   3. 自動處理 PKCE (Proof Key for Code Exchange) 安全流程
+//   - Native: 使用 expo-auth-session 做 OAuth（自動 PKCE、跨平台一致）
+//   - Web: 自訂 OAuth 流程 + BroadcastChannel（繞過 COOP 限制）
+//
+// Web COOP 問題：
+//   Google 的 accounts.google.com 設定了 Cross-Origin-Opener-Policy: same-origin，
+//   導致 expo-web-browser 的 popup 機制無法使用 window.opener.postMessage()。
+//   解法：popup 回調後透過 BroadcastChannel 傳送授權碼給主視窗。
 //
 // 安全措施：
 //   - Access Token 存在記憶體（不持久化，1 小時過期）
 //   - Refresh Token 存在 expo-secure-store（加密儲存）
 //   - 登出時同時清除本地 token + Google 端授權
+//   - Web 使用 PKCE 保護 Authorization Code 交換
 // ============================================================================
 
 import { useCallback, useEffect } from 'react';
@@ -29,19 +33,31 @@ import {
     GOOGLE_DISCOVERY_DOC_URL,
     isGoogleConfigured,
 } from './googleConfig';
+import {
+    handleOAuthCallback,
+    OAUTH_BROADCAST_CHANNEL_NAME,
+    type OAuthCallbackMessage,
+} from './oauthCallbackHandler';
 
 // ---------------------------------------------------------------------------
-// 🌐 Web OAuth Popup 回調處理
+// 🌐 Web OAuth Popup 回調處理（雙軌策略）
 // ---------------------------------------------------------------------------
-// expo-auth-session 在 Web 上使用 popup 視窗進行 OAuth。
-// maybeCompleteAuthSession() 會檢測當前頁面是否是 OAuth redirect 目標：
-//   - 如果是（popup 被重導向到此頁面）：讀取 URL 中的授權碼，通知父視窗，關閉 popup
-//   - 如果不是（正常載入主頁面）：什麼都不做
+// Native: 使用 expo-web-browser 的 maybeCompleteAuthSession()（原始機制）
+// Web: 使用自訂的 handleOAuthCallback()（BroadcastChannel 方案，繞過 COOP）
 //
 // ⚠️ 必須在模組頂層呼叫（不在 Hook 內），確保在 React 渲染之前就執行。
-// ❌ 如果不呼叫：OAuth popup 無法將授權結果回傳給主視窗，
-//    promptAsync() 永遠不會 resolve，isSignedIn 永遠是 false。
-WebBrowser.maybeCompleteAuthSession();
+if (Platform.OS === 'web') {
+    // Web: 檢查是否為 OAuth popup 回調頁面
+    // 如果是 → 透過 BroadcastChannel 傳送授權碼給主視窗
+    // 如果不是 → 什麼都不做
+    const result = handleOAuthCallback();
+    if (result.type === 'success') {
+        console.info('[useGoogleAuth] Web OAuth 回調已處理:', result.message);
+    }
+} else {
+    // Native: 使用原始的 expo-web-browser 機制
+    WebBrowser.maybeCompleteAuthSession();
+}
 
 // ---------------------------------------------------------------------------
 // 🔒 SecureStore Keys — token 儲存鍵名
@@ -300,6 +316,221 @@ async function fetchUserInfo(accessToken: string): Promise<GoogleUser> {
 }
 
 // ---------------------------------------------------------------------------
+// 🌐 Web 專用：PKCE 工具函式
+// ---------------------------------------------------------------------------
+// Web 端自訂 OAuth 流程需要手動產生 PKCE code_verifier 和 code_challenge。
+// Native 端由 expo-auth-session 自動處理。
+
+/**
+ * 產生隨機的 code_verifier（43~128 字元的 URL-safe 字串）。
+ * 使用 Web Crypto API 確保密碼學安全性。
+ */
+function generateCodeVerifier(length = 64): string {
+    const CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    const array = new Uint8Array(length);
+    crypto.getRandomValues(array);
+    return Array.from(array, (byte) => CHARSET[byte % CHARSET.length]).join('');
+}
+
+/**
+ * 使用 SHA-256 計算 code_challenge（Base64URL 編碼）。
+ *
+ * OAuth 2.0 PKCE 規範：
+ *   code_challenge = BASE64URL(SHA256(code_verifier))
+ */
+async function generateCodeChallenge(codeVerifier: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(codeVerifier);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    // Base64URL 編碼（不含 padding）
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    return base64
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
+/**
+ * 產生隨機的 OAuth state 參數（CSRF 防護）。
+ */
+function generateOAuthState(): string {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// ---------------------------------------------------------------------------
+// 🌐 Web 專用：自訂 OAuth 登入流程
+// ---------------------------------------------------------------------------
+
+/** Web OAuth popup 超時時間（毫秒） */
+const WEB_OAUTH_TIMEOUT_MS = 2 * 60 * 1000; // 2 分鐘
+
+/** Web OAuth popup 視窗大小 */
+const WEB_POPUP_WIDTH = 500;
+const WEB_POPUP_HEIGHT = 650;
+
+/**
+ * Web 端自訂 OAuth 登入流程。
+ *
+ * 使用 BroadcastChannel API 取代 expo-web-browser 的 popup 機制，
+ * 繞過 Google 的 Cross-Origin-Opener-Policy (COOP) 限制。
+ *
+ * 流程：
+ * 1. 產生 PKCE code_verifier + code_challenge
+ * 2. 構建 Google OAuth URL
+ * 3. 開啟 popup 視窗
+ * 4. 監聽 BroadcastChannel 等待 popup 回傳 authorization code
+ * 5. 用 code + code_verifier 換取 access + refresh token
+ * 6. 取得使用者資訊，更新 store
+ *
+ * @param store - GoogleAuthState Zustand store
+ * @param redirectUri - OAuth redirect URI（popup 回調後會導向此 URL）
+ */
+async function signInWeb(
+    store: GoogleAuthState,
+    redirectUri: string,
+): Promise<void> {
+    // 1. 產生 PKCE 參數
+    const codeVerifier = generateCodeVerifier();
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+    const state = generateOAuthState();
+
+    console.info('[signInWeb] PKCE 參數已產生');
+    console.info('[signInWeb] Redirect URI:', redirectUri);
+
+    // 2. 構建 Google OAuth URL
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', googleClientId);
+    authUrl.searchParams.set('redirect_uri', redirectUri);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', GOOGLE_DRIVE_SCOPES.join(' '));
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+    authUrl.searchParams.set('access_type', 'offline');
+    authUrl.searchParams.set('prompt', 'consent');
+
+    // 3. 開啟 popup 視窗
+    const top = Math.max(0, (window.screen.height - WEB_POPUP_HEIGHT) * 0.5);
+    const left = Math.max(0, (window.screen.width - WEB_POPUP_WIDTH) * 0.5);
+    const features = `width=${WEB_POPUP_WIDTH},height=${WEB_POPUP_HEIGHT},top=${top},left=${left},toolbar=no,menubar=no,resizable=yes,scrollbars=yes`;
+
+    const popup = window.open(authUrl.toString(), '_blank', features);
+    if (!popup) {
+        throw new Error('瀏覽器封鎖了彈出視窗。請允許此網站的彈出視窗後再試。');
+    }
+
+    try {
+        popup.focus();
+    } catch {
+        // focus 失敗不影響功能
+    }
+
+    console.info('[signInWeb] OAuth popup 已開啟，等待 BroadcastChannel 回傳...');
+
+    // 4. 監聽 BroadcastChannel 等待 popup 回傳 authorization code
+    const code = await new Promise<string>((resolve, reject) => {
+        const channel = new BroadcastChannel(OAUTH_BROADCAST_CHANNEL_NAME);
+        let settled = false;
+
+        // 超時處理
+        const timeout = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                channel.close();
+                // 嘗試關閉 popup
+                try { popup.close(); } catch { /* COOP 可能阻止 */ }
+                reject(new Error('OAuth 登入逾時（2 分鐘）。請重試。'));
+            }
+        }, WEB_OAUTH_TIMEOUT_MS);
+
+        // 定期檢查 popup 是否被使用者手動關閉
+        const pollInterval = setInterval(() => {
+            try {
+                if (popup.closed && !settled) {
+                    settled = true;
+                    clearTimeout(timeout);
+                    clearInterval(pollInterval);
+                    channel.close();
+                    reject(new Error('使用者關閉了登入視窗。'));
+                }
+            } catch {
+                // COOP 可能阻止讀取 popup.closed，忽略錯誤
+                // 此時只能依賴 BroadcastChannel 的回傳或超時
+            }
+        }, 2000);
+
+        // 監聯 BroadcastChannel 訊息
+        channel.onmessage = (event: MessageEvent) => {
+            if (settled) return;
+
+            const data = event.data;
+
+            // 檢查是否為 OAuth 錯誤回應
+            if (data?.source === 'expo-oauth-popup' && data?.error) {
+                settled = true;
+                clearTimeout(timeout);
+                clearInterval(pollInterval);
+                channel.close();
+                try { popup.close(); } catch { /* ignore */ }
+                reject(new Error(`OAuth 錯誤：${data.error} — ${data.errorDescription || ''}`));
+                return;
+            }
+
+            // 檢查是否為正確的 OAuth 回應
+            if (data?.source === 'expo-oauth-popup' && data?.code) {
+                const msg = data as OAuthCallbackMessage;
+                // 驗證 state 參數（CSRF 防護）
+                if (msg.state !== state) {
+                    console.warn('[signInWeb] State 不匹配，忽略此訊息', {
+                        expected: state,
+                        received: msg.state,
+                    });
+                    return;
+                }
+
+                settled = true;
+                clearTimeout(timeout);
+                clearInterval(pollInterval);
+                channel.close();
+                try { popup.close(); } catch { /* COOP 可能阻止 */ }
+                console.info('[signInWeb] ✅ 收到授權碼');
+                resolve(msg.code);
+            }
+        };
+    });
+
+    // 5. 用 authorization code 換取 tokens
+    console.info('[signInWeb] 正在交換 token...');
+    const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(
+        code,
+        codeVerifier,
+        redirectUri,
+    );
+
+    const tokenExpiresAt = Date.now() + expiresIn * 1000;
+
+    // 6. 保存 refresh token
+    if (refreshToken) {
+        await secureSet(SECURE_KEY_REFRESH_TOKEN, refreshToken);
+        _moduleRefreshToken = refreshToken;
+        console.info('[signInWeb] ✅ Refresh token 已保存');
+    } else {
+        console.warn('[signInWeb] ⚠️ 未收到 refresh token');
+    }
+
+    // 7. 取得使用者資訊
+    const user = await fetchUserInfo(accessToken);
+    await secureSet(SECURE_KEY_USER_EMAIL, user.email);
+    await secureSet(SECURE_KEY_USER_NAME, user.name);
+
+    // 8. 更新 store
+    store._setSignedIn(accessToken, tokenExpiresAt, user);
+    console.info('[signInWeb] ✅ 登入成功:', user.email);
+}
+
+// ---------------------------------------------------------------------------
 // 🎣 useGoogleAuth — 主 Hook
 // ---------------------------------------------------------------------------
 
@@ -423,27 +654,13 @@ export function useGoogleAuth() {
     // ── signIn：啟動 OAuth 授權流程 ──
     const signIn = useCallback(async () => {
         // ── 防止重入：避免多次點擊產生多個 OAuth popup ──
-        // expo-web-browser 的 openAuthSessionAsync 使用 setInterval 輪詢 popup.closed，
-        // 當 Google 設定 Cross-Origin-Opener-Policy 時，每次輪詢都會觸發 COOP 警告。
-        // 多個 popup session 同時運行 = 多重 setInterval = 海量 COOP 警告。
         if (store.isLoading) {
             console.info('[useGoogleAuth] OAuth 流程進行中，忽略重複請求');
             return;
         }
 
-        // ── Web 端：關閉殘留的 OAuth popup 視窗 ──
-        // 如果上次的 popup 沒有被正確關閉（使用者直接關瀏覽器分頁等情況），
-        // dismissAuthSession 會清除 listener、interval、localStorage 殘留。
-        if (Platform.OS === 'web') {
-            WebBrowser.dismissAuthSession();
-        }
-
         if (!isGoogleConfigured()) {
             store._setError('Google Client ID 尚未設定。請在 .env 中設置 EXPO_PUBLIC_GOOGLE_CLIENT_ID。');
-            return;
-        }
-        if (!request || !discovery) {
-            store._setError('OAuth 尚未準備就緒，請稍候再試。');
             return;
         }
 
@@ -451,37 +668,52 @@ export function useGoogleAuth() {
         store._setError(null);
 
         try {
-            const result = await promptAsync();
-
-            if (result.type !== 'success' || !result.params?.code) {
-                if (result.type === 'cancel' || result.type === 'dismiss') {
-                    store._setLoading(false);
-                    return; // 使用者取消，不視為錯誤
+            if (Platform.OS === 'web') {
+                // ═══════════════════════════════════════════════════════
+                // 🌐 Web：自訂 OAuth 流程（BroadcastChannel 方案）
+                // ═══════════════════════════════════════════════════════
+                // 繞過 expo-web-browser 的 popup 機制，因為 Google 的 COOP
+                // 會阻止 popup 與主視窗的 window.opener 通訊。
+                // 改用 BroadcastChannel API，不依賴 window.opener。
+                await signInWeb(store, redirectUri);
+            } else {
+                // ═══════════════════════════════════════════════════════
+                // 📱 Native：使用 expo-auth-session（原始機制）
+                // ═══════════════════════════════════════════════════════
+                if (!request || !discovery) {
+                    store._setError('OAuth 尚未準備就緒，請稍候再試。');
+                    return;
                 }
-                throw new Error(`OAuth 失敗：${result.type}`);
+
+                const result = await promptAsync();
+
+                if (result.type !== 'success' || !result.params?.code) {
+                    if (result.type === 'cancel' || result.type === 'dismiss') {
+                        store._setLoading(false);
+                        return;
+                    }
+                    throw new Error(`OAuth 失敗：${result.type}`);
+                }
+
+                const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(
+                    result.params.code,
+                    request.codeVerifier!,
+                    redirectUri,
+                );
+
+                const tokenExpiresAt = Date.now() + expiresIn * 1000;
+
+                if (refreshToken) {
+                    await secureSet(SECURE_KEY_REFRESH_TOKEN, refreshToken);
+                    _moduleRefreshToken = refreshToken;
+                }
+
+                const user = await fetchUserInfo(accessToken);
+                await secureSet(SECURE_KEY_USER_EMAIL, user.email);
+                await secureSet(SECURE_KEY_USER_NAME, user.name);
+
+                store._setSignedIn(accessToken, tokenExpiresAt, user);
             }
-
-            // 用 authorization code 換取 tokens
-            const { accessToken, refreshToken, expiresIn } = await exchangeCodeForTokens(
-                result.params.code,
-                request.codeVerifier!,
-                redirectUri,
-            );
-
-            const tokenExpiresAt = Date.now() + expiresIn * 1000;
-
-            // 保存 refresh token 到安全儲存
-            if (refreshToken) {
-                await secureSet(SECURE_KEY_REFRESH_TOKEN, refreshToken);
-                _moduleRefreshToken = refreshToken;
-            }
-
-            // 取得使用者資訊
-            const user = await fetchUserInfo(accessToken);
-            await secureSet(SECURE_KEY_USER_EMAIL, user.email);
-            await secureSet(SECURE_KEY_USER_NAME, user.name);
-
-            store._setSignedIn(accessToken, tokenExpiresAt, user);
         } catch (err) {
             const message = err instanceof Error ? err.message : '登入時發生未知錯誤';
             store._setError(message);
@@ -528,20 +760,32 @@ export function useGoogleAuth() {
             state.tokenExpiresAt &&
             state.tokenExpiresAt > Date.now() + 5 * 60 * 1000
         ) {
+            const remainingMin = Math.round((state.tokenExpiresAt - Date.now()) / 60000);
+            console.info(`[getValidToken] ✅ Token 有效（剩餘 ${remainingMin} 分鐘），直接使用`);
             return state.accessToken;
         }
 
         // 需要刷新
         const rt = _moduleRefreshToken;
-        if (!rt) return null;
+        if (!rt) {
+            console.warn('[getValidToken] ⚠️ 無 refresh token，無法刷新');
+            return null;
+        }
+
+        const remainingMs = state.tokenExpiresAt ? state.tokenExpiresAt - Date.now() : -Infinity;
+        console.info(
+            `[getValidToken] 🔄 Token ${remainingMs <= 0 ? '已過期' : `即將過期（剩餘 ${Math.round(remainingMs / 1000)}s）`}，正在用 refresh token 刷新...`,
+        );
 
         try {
             const { accessToken, expiresIn } = await refreshAccessToken(rt);
             const tokenExpiresAt = Date.now() + expiresIn * 1000;
             useGoogleAuthStore.getState()._updateToken(accessToken, tokenExpiresAt);
+            console.info(`[getValidToken] ✅ Token 刷新成功，新 token 有效期 ${expiresIn} 秒`);
             return accessToken;
-        } catch {
+        } catch (refreshErr) {
             // Refresh 失敗 → 登出
+            console.error('[getValidToken] ❌ Refresh token 失效，強制登出:', refreshErr);
             await secureDelete(SECURE_KEY_REFRESH_TOKEN);
             _moduleRefreshToken = null;
             useGoogleAuthStore.getState()._setSignedOut();
@@ -550,6 +794,7 @@ export function useGoogleAuth() {
     }, []);
 
     return {
+
         /** 是否正在進行 OAuth 流程 */
         isLoading: store.isLoading,
         /** 是否已登入 Google */

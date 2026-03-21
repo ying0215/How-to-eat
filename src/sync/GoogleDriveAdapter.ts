@@ -18,8 +18,104 @@ import {
     GOOGLE_DRIVE_API_BASE,
     GOOGLE_DRIVE_UPLOAD_BASE,
     DRIVE_FAVORITES_FILENAME,
+    GOOGLE_TOKEN_INFO_URL,
 } from '../auth/googleConfig';
 import type { SyncableFavoriteState } from './mergeStrategy';
+
+// ---------------------------------------------------------------------------
+// 🔍 Token Scope 驗證
+// ---------------------------------------------------------------------------
+
+/**
+ * Token scope 驗證結果。
+ *
+ * 用於診斷 403 (Forbidden) 錯誤：
+ *   - valid=true: token 擁有 drive.appdata scope
+ *   - valid=false: token 缺少必要 scope（需要重新登入取得授權）
+ */
+export interface TokenScopeValidation {
+    /** token 是否包含 drive.appdata scope */
+    valid: boolean;
+    /** token 實際擁有的所有 scopes */
+    scopes: string[];
+    /** 驗證失敗時的錯誤訊息 */
+    error?: string;
+}
+
+/**
+ * 驗證 access token 是否擁有 Google Drive appdata 的存取權限。
+ *
+ * 呼叫 Google TokenInfo API 取得 token 實際持有的 scopes，
+ * 檢查是否包含 `https://www.googleapis.com/auth/drive.appdata`。
+ *
+ * 此函式用於 403 錯誤的診斷流程：
+ *   - 若 token 缺少 scope → 使用者需要登出重新登入
+ *   - 若 token 有 scope 但仍 403 → Google Cloud Console 設定問題
+ *
+ * @param token 要驗證的 access token
+ * @returns Token scope 驗證結果
+ *
+ * @example
+ * ```ts
+ * const validation = await validateTokenScopes(accessToken);
+ * if (!validation.valid) {
+ *     console.error('Token 缺少 drive.appdata scope:', validation.scopes);
+ *     // 提示使用者重新登入
+ * }
+ * ```
+ */
+export async function validateTokenScopes(
+    token: string,
+): Promise<TokenScopeValidation> {
+    const REQUIRED_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+
+    try {
+        const url = `${GOOGLE_TOKEN_INFO_URL}?access_token=${encodeURIComponent(token)}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            const errText = await response.text();
+            console.warn(
+                `[TokenScope] TokenInfo API 回傳 ${response.status}: ${errText}`,
+            );
+            return {
+                valid: false,
+                scopes: [],
+                error: `TokenInfo API 錯誤 (${response.status}): token 可能已過期或無效`,
+            };
+        }
+
+        const data = await response.json();
+        const scopeString = (data.scope as string) ?? '';
+        const scopes = scopeString.split(' ').filter(Boolean);
+        const hasDriveAppdata = scopes.includes(REQUIRED_SCOPE);
+
+        if (!hasDriveAppdata) {
+            console.warn(
+                '[TokenScope] ⚠️ Token 缺少 drive.appdata scope！',
+                '\n  現有 scopes:', scopes.join(', '),
+                '\n  需要 scope:', REQUIRED_SCOPE,
+                '\n  解決方式: 請登出後重新登入，以取得包含 drive.appdata 權限的新 token。',
+            );
+        } else {
+            console.info(
+                '[TokenScope] ✅ Token scope 驗證通過，包含 drive.appdata',
+            );
+        }
+
+        return { valid: hasDriveAppdata, scopes };
+    } catch (err) {
+        const message = err instanceof Error
+            ? err.message
+            : 'TokenInfo API 呼叫時發生未知錯誤';
+        console.warn('[TokenScope] 無法驗證 token scope:', message);
+        return {
+            valid: false,
+            scopes: [],
+            error: `無法驗證 token scope: ${message}`,
+        };
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 🔧 HTTP 工具

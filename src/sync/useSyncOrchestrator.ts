@@ -23,7 +23,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useGoogleAuthStore } from '../auth/useGoogleAuth';
-import { downloadFavorites, uploadFavorites, DriveApiError } from './GoogleDriveAdapter';
+import { downloadFavorites, uploadFavorites, DriveApiError, validateTokenScopes } from './GoogleDriveAdapter';
 import {
     mergeStates,
     upgradeToSyncable,
@@ -237,18 +237,58 @@ export async function performSync(
 
         return true;
     } catch (err) {
-        // ── 403 特殊處理：嘗試 refresh token 後重試一次 ──
+        // ── 403 特殊處理：診斷 token scope + 嘗試 refresh token 後重試一次 ──
         if (err instanceof DriveApiError && err.requiresReauth) {
             console.warn(
-                '[SyncOrchestrator] Drive API 403 — 嘗試重新取得 token 後重試...',
+                '[SyncOrchestrator] Drive API 403 — 開始診斷 token scope...',
             );
 
             try {
-                // 強制重新取得 token（useGoogleAuth 的 getValidToken 應自動 refresh）
-                const freshToken = await getToken();
-                if (freshToken) {
-                    // 用新 token 重試下載
-                    const retryRemote = await downloadFavorites(freshToken);
+                // Step A: 診斷當前 token 的 scope
+                const currentToken = await getToken();
+                if (currentToken) {
+                    const scopeCheck = await validateTokenScopes(currentToken);
+
+                    if (!scopeCheck.valid) {
+                        // ── Token 缺少 drive.appdata scope ──
+                        // 這通常是因為：
+                        //   1. OAuth 同意畫面尚未宣告 drive.appdata scope
+                        //   2. 使用者在同意畫面加入 scope 之前就已經授權過了
+                        //   解決方式：登出後重新登入，取得包含新 scope 的 token
+                        const scopeDiagMsg = scopeCheck.error
+                            ? `Token 驗證失敗: ${scopeCheck.error}`
+                            : `Token 缺少 drive.appdata scope（現有: ${scopeCheck.scopes.join(', ')}）`;
+
+                        console.error(
+                            '[SyncOrchestrator] 🔴 403 根因確認：Token scope 不足',
+                            '\n ', scopeDiagMsg,
+                            '\n  解決步驟:',
+                            '\n    1. 檢查 Google Cloud Console → OAuth consent screen → Scopes 是否包含 drive.appdata',
+                            '\n    2. 在 App 中登出 Google 帳號',
+                            '\n    3. 重新登入以取得含 drive.appdata 權限的新 token',
+                        );
+
+                        syncMeta._setSyncError(
+                            '同步授權不足：Token 缺少 drive.appdata 權限。' +
+                            '請先登出再重新登入 Google 帳號。' +
+                            '如問題持續，請到 Google Cloud Console 確認 OAuth 同意畫面已加入 drive.appdata scope。',
+                        );
+                        return false;
+                    }
+
+                    // ── Token 有 scope 但仍 403 ──
+                    // 可能原因：Cloud Console Drive API 未啟用、帳號不在 Test users 中
+                    console.warn(
+                        '[SyncOrchestrator] ⚠️ Token 擁有 drive.appdata scope 但仍收到 403。',
+                        '\n  可能原因:',
+                        '\n    1. Google Cloud Console 的 Google Drive API 未啟用',
+                        '\n    2. OAuth 同意畫面為 Testing 模式，但帳號未加入 Test users',
+                        '\n    3. Google 端授權可能有延遲，請稍後再試',
+                        '\n  嘗試用新 token 重試...',
+                    );
+
+                    // Step B: 用當前 token（已驗證有 scope）重試一次
+                    const retryRemote = await downloadFavorites(currentToken);
 
                     // 組裝本地資料
                     const favStoreRetry = useFavoriteStore.getState();
@@ -281,7 +321,7 @@ export async function performSync(
                     }
 
                     // 上傳
-                    await uploadFavorites(freshToken, retryMerged);
+                    await uploadFavorites(currentToken, retryMerged);
 
                     // 寫回本地
                     const retryClean = downgradeFromSyncable(retryMerged.favorites);
@@ -302,11 +342,11 @@ export async function performSync(
                     });
 
                     syncMeta._setSyncSuccess(retryMerged._syncVersion);
-                    console.info('[SyncOrchestrator] 403 重試成功！');
+                    console.info('[SyncOrchestrator] ✅ 403 重試成功！');
                     return true;
                 }
             } catch (retryErr) {
-                console.error('[SyncOrchestrator] 403 重試失敗:', retryErr);
+                console.error('[SyncOrchestrator] 403 診斷/重試流程失敗:', retryErr);
                 // fallthrough 到下方通用錯誤處理
             }
         }
@@ -314,8 +354,11 @@ export async function performSync(
         const message =
             err instanceof DriveApiError
                 ? err.requiresReauth
-                    ? `Drive API 授權失敗 (${err.statusCode}): 請嘗試重新登入，` +
-                      '或在 Google Cloud Console 確認 Drive API 已啟用且帳號為測試使用者。'
+                    ? `Drive API 授權失敗 (${err.statusCode}): 請嘗試登出後重新登入。` +
+                      '若問題持續，請在 Google Cloud Console 確認：' +
+                      '(1) Drive API 已啟用 ' +
+                      '(2) OAuth 同意畫面 Scopes 包含 drive.appdata ' +
+                      '(3) 帳號已加入 Test users（若為 Testing 模式）。'
                     : `Drive API 錯誤 (${err.statusCode}): ${err.message}`
                 : err instanceof Error
                   ? err.message

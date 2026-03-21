@@ -95,6 +95,24 @@ export const GOOGLE_DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive
 export const DRIVE_FAVORITES_FILENAME = 'how-to-eat-favorites.json';
 
 /**
+ * Google OAuth TokenInfo API URL。
+ *
+ * 用於驗證 access token 實際持有的 scopes，
+ * 以診斷 403 (Forbidden) 錯誤是否因為 token 缺少必要的 drive.appdata scope。
+ *
+ * 回傳範例：
+ * ```json
+ * {
+ *   "azp": "xxxx.apps.googleusercontent.com",
+ *   "scope": "openid https://www.googleapis.com/auth/drive.appdata ...",
+ *   "expires_in": "3598",
+ *   ...
+ * }
+ * ```
+ */
+export const GOOGLE_TOKEN_INFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
+
+/**
  * 快速檢查 Google 登入所需的 Client ID 是否已正確設定。
  *
  * @returns true 表示 Client ID 已設定，可以執行 Google 登入流程

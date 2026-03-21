@@ -22,6 +22,7 @@ import {
     deleteFavoritesFile,
     checkDriveConnectivity,
     DriveApiError,
+    validateTokenScopes,
 } from '../sync/GoogleDriveAdapter';
 
 import type { SyncableFavoriteState } from '../sync/mergeStrategy';
@@ -306,5 +307,111 @@ describe('fetchWithRetry — 4xx 不重試', () => {
 
         // 只應該呼叫一次（不重試）
         expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: validateTokenScopes — Token Scope 診斷
+// ---------------------------------------------------------------------------
+
+describe('validateTokenScopes', () => {
+    it('token 包含 drive.appdata scope 時回傳 valid=true', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeSuccessResponse({
+                scope: 'openid email profile https://www.googleapis.com/auth/drive.appdata',
+                expires_in: '3598',
+                azp: 'test-client-id.apps.googleusercontent.com',
+            }),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(true);
+        expect(result.scopes).toContain('https://www.googleapis.com/auth/drive.appdata');
+        expect(result.scopes).toContain('openid');
+        expect(result.error).toBeUndefined();
+
+        // 確認 URL 包含 tokeninfo 和 access_token
+        expect(mockFetch.mock.calls[0][0]).toContain('tokeninfo');
+        expect(mockFetch.mock.calls[0][0]).toContain('access_token=');
+    });
+
+    it('token 缺少 drive.appdata scope 時回傳 valid=false', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeSuccessResponse({
+                scope: 'openid email profile',
+                expires_in: '3598',
+                azp: 'test-client-id.apps.googleusercontent.com',
+            }),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(false);
+        expect(result.scopes).toContain('openid');
+        expect(result.scopes).not.toContain('https://www.googleapis.com/auth/drive.appdata');
+        expect(result.error).toBeUndefined();
+    });
+
+    it('token 只有 drive.appdata scope（無其他 scope）時回傳 valid=true', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeSuccessResponse({
+                scope: 'https://www.googleapis.com/auth/drive.appdata',
+            }),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(true);
+        expect(result.scopes).toHaveLength(1);
+    });
+
+    it('TokenInfo API 回傳錯誤時 graceful fallback', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeErrorResponse(400, 'Invalid token'),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(false);
+        expect(result.scopes).toEqual([]);
+        expect(result.error).toContain('TokenInfo API');
+    });
+
+    it('TokenInfo API 網路錯誤時 graceful fallback', async () => {
+        mockFetch.mockRejectedValueOnce(new Error('Network failure'));
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(false);
+        expect(result.scopes).toEqual([]);
+        expect(result.error).toContain('Network failure');
+    });
+
+    it('TokenInfo API 回傳空 scope 欄位時回傳 valid=false', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeSuccessResponse({
+                scope: '',
+                expires_in: '3598',
+            }),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(false);
+        expect(result.scopes).toEqual([]);
+    });
+
+    it('TokenInfo API 回傳無 scope 欄位時回傳 valid=false', async () => {
+        mockFetch.mockResolvedValueOnce(
+            makeSuccessResponse({
+                expires_in: '3598',
+            }),
+        );
+
+        const result = await validateTokenScopes(TOKEN);
+
+        expect(result.valid).toBe(false);
+        expect(result.scopes).toEqual([]);
     });
 });
