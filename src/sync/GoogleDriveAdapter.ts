@@ -121,78 +121,55 @@ export async function validateTokenScopes(
 // 🔧 HTTP 工具
 // ---------------------------------------------------------------------------
 
+import { fetchWithResilience } from '../utils/fetchWithResilience';
+
 /**
- * 帶有自動重試的 fetch 封裝。
- *
- * 針對暫時性錯誤（5xx、網路超時）自動重試，指數退避 (exponential backoff)。
- * 對於 4xx 錯誤（client error）不重試，直接拋出。
+ * 針對 Google Drive 設計的 api request 封裝。
+ * 
+ * 底層直接依賴全域的 fetchWithResilience() 以獲得逾時、限流與指數退避功能。
+ * 負責將網路或 HTTP 錯誤轉換成上層依賴的 DriveApiError。
  *
  * @param url 請求 URL
  * @param options fetch 選項
  * @param maxRetries 最大重試次數（預設 3）
  * @returns Response 物件
- * @throws 超過最大重試次數或遇到不可重試錯誤時拋出
+ * @throws 拋出 DriveApiError
  */
-async function fetchWithRetry(
+async function driveFetch(
     url: string,
     options: RequestInit,
     maxRetries: number = 3,
 ): Promise<Response> {
-    let lastError: Error | null = null;
+    try {
+        const response = await fetchWithResilience(url, options, {
+            endpointId: 'google_drive_api',
+            maxRetries,
+            baseDelayMs: 500,
+        });
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            const response = await fetch(url, options);
-
-            // 2xx: 成功
-            if (response.ok) return response;
-
-            // 4xx: client error，不重試（通常是 token 過期或權限不足）
-            if (response.status >= 400 && response.status < 500) {
-                const errBody = await response.text();
-                throw new DriveApiError(
-                    `Drive API ${response.status}: ${errBody}`,
-                    response.status,
-                    false, // 不可重試
-                );
-            }
-
-            // 5xx: server error，可重試
-            if (attempt < maxRetries) {
-                const backoffMs = Math.pow(2, attempt) * 500 + Math.random() * 200;
-                await sleep(backoffMs);
-                continue;
-            }
-
+        // fetchWithResilience 遇到 429 或 5xx 會自動拋錯重試，
+        // 若回傳到這裡且 !response.ok，代表是未重試的客戶端錯誤 (4xx 但非 429)
+        if (!response.ok) {
             const errBody = await response.text();
             throw new DriveApiError(
-                `Drive API ${response.status} after ${maxRetries} retries: ${errBody}`,
+                `Drive API ${response.status}: ${errBody}`,
                 response.status,
-                true,
+                false, // 不可重試
             );
-        } catch (err) {
-            if (err instanceof DriveApiError) throw err;
-
-            // 網路錯誤（斷線、DNS 失敗等），可重試
-            lastError = err instanceof Error ? err : new Error(String(err));
-            if (attempt < maxRetries) {
-                const backoffMs = Math.pow(2, attempt) * 500 + Math.random() * 200;
-                await sleep(backoffMs);
-                continue;
-            }
         }
+
+        return response;
+    } catch (err) {
+        if (err instanceof DriveApiError) throw err;
+
+        // 如果是 fetchWithResilience 放棄重試而拋出的錯，將其包裝為 DriveApiError
+        const statusCode = (err as any).status ?? 0;
+        throw new DriveApiError(
+            `Drive API request failed: ${err instanceof Error ? err.message : String(err)}`,
+            statusCode,
+            true, // 其他網路層次錯誤可視為暫時性可重試
+        );
     }
-
-    throw new DriveApiError(
-        `Network error after ${maxRetries} retries: ${lastError?.message ?? 'Unknown'}`,
-        0,
-        true,
-    );
-}
-
-/** Promise-based sleep */
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +225,7 @@ export async function findFavoritesFile(
         `${GOOGLE_DRIVE_API_BASE}/files?` +
         `spaces=appDataFolder&q=${query}&fields=files(id,name,modifiedTime)&pageSize=1`;
 
-    const response = await fetchWithRetry(url, {
+    const response = await driveFetch(url, {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
     });
@@ -276,7 +253,7 @@ export async function downloadFavorites(
     if (!file) return null;
 
     const url = `${GOOGLE_DRIVE_API_BASE}/files/${file.id}?alt=media`;
-    const response = await fetchWithRetry(url, {
+    const response = await driveFetch(url, {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
     });
@@ -287,9 +264,16 @@ export async function downloadFavorites(
     try {
         const parsed = JSON.parse(text) as SyncableFavoriteState;
 
-        // 基礎資料完整性校驗
-        if (!Array.isArray(parsed.favorites) || !Array.isArray(parsed.queue)) {
-            console.warn('[GoogleDrive] Downloaded data has invalid structure, ignoring.');
+        // 基礎資料完整性校驗（相容舊版 queue 和新版 groups 兩種格式）
+        if (!Array.isArray(parsed.favorites)) {
+            console.warn('[GoogleDrive] Downloaded data has invalid structure (missing favorites array), ignoring.');
+            return null;
+        }
+        // 新版格式需要有 groups；舊版需要有 queue
+        const hasNewFormat = Array.isArray(parsed.groups);
+        const hasLegacyFormat = Array.isArray(parsed.queue);
+        if (!hasNewFormat && !hasLegacyFormat) {
+            console.warn('[GoogleDrive] Downloaded data has invalid structure (missing both groups and queue), ignoring.');
             return null;
         }
 
@@ -324,7 +308,7 @@ export async function uploadFavorites(
         // ── 更新既有檔案 ──
         // 使用 simple upload (uploadType=media) 直接覆蓋檔案內容
         const url = `${GOOGLE_DRIVE_UPLOAD_BASE}/files/${existingFile.id}?uploadType=media`;
-        const response = await fetchWithRetry(url, {
+        const response = await driveFetch(url, {
             method: 'PATCH',
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -356,7 +340,7 @@ export async function uploadFavorites(
             `--${boundary}--`;
 
         const url = `${GOOGLE_DRIVE_UPLOAD_BASE}/files?uploadType=multipart`;
-        const response = await fetchWithRetry(url, {
+        const response = await driveFetch(url, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -383,7 +367,7 @@ export async function deleteFavoritesFile(token: string): Promise<boolean> {
     if (!file) return true; // 檔案不存在，視為成功
 
     const url = `${GOOGLE_DRIVE_API_BASE}/files/${file.id}`;
-    await fetchWithRetry(url, {
+    await driveFetch(url, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
     });
@@ -402,7 +386,7 @@ export async function deleteFavoritesFile(token: string): Promise<boolean> {
 export async function checkDriveConnectivity(token: string): Promise<boolean> {
     try {
         const url = `${GOOGLE_DRIVE_API_BASE}/about?fields=user(emailAddress)`;
-        const response = await fetchWithRetry(
+        const response = await driveFetch(
             url,
             {
                 method: 'GET',

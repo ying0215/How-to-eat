@@ -202,9 +202,10 @@ async function expandShortUrl(shortUrl: string): Promise<string | null> {
 
 /** 原生端：直接 fetch follow redirect */
 async function expandShortUrlDirect(shortUrl: string): Promise<string | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), REDIRECT_TIMEOUT_MS);
+        timer = setTimeout(() => controller.abort(), REDIRECT_TIMEOUT_MS);
 
         const response = await fetch(shortUrl, {
             method: 'GET',
@@ -228,6 +229,7 @@ async function expandShortUrlDirect(shortUrl: string): Promise<string | null> {
         if (STANDARD_LINK_PATTERN.test(finalUrl)) return finalUrl;
         return null;
     } catch (err: unknown) {
+        if (timer) clearTimeout(timer);
         const message = err instanceof Error ? err.message : '展開短連結失敗';
         console.error('[googleMapsUrlParser.expandShortUrl] Error:', message);
         return null;
@@ -259,9 +261,10 @@ async function expandShortUrlViaProxy(shortUrl: string): Promise<string | null> 
     ];
 
     for (const proxyUrl of proxyUrls) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), REDIRECT_TIMEOUT_MS);
+            timer = setTimeout(() => controller.abort(), REDIRECT_TIMEOUT_MS);
 
             const response = await fetch(proxyUrl, {
                 method: 'GET',
@@ -307,6 +310,7 @@ async function expandShortUrlViaProxy(shortUrl: string): Promise<string | null> 
             // 這個代理沒有回傳有用結果，嘗試下一個
             continue;
         } catch (err: unknown) {
+            if (timer) clearTimeout(timer);
             const message = err instanceof Error ? err.message : 'proxy error';
             console.warn(`[googleMapsUrlParser.expandShortUrl] Proxy failed: ${message}`);
             continue;

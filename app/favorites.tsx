@@ -35,14 +35,10 @@ import {
 import { Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { theme } from '../src/constants/theme';
-import { useFavoriteStore, FavoriteRestaurant } from '../src/store/useFavoriteStore';
+import { useFavoriteStore, FavoriteRestaurant, FavoriteGroup, MAX_GROUPS } from '../src/store/useFavoriteStore';
 import { useUserStore } from '../src/store/useUserStore';
 import { useMapJump } from '../src/hooks/useMapJump';
-import { usePlaceSearch } from '../src/hooks/usePlaceSearch';
-import { useLocation } from '../src/hooks/useLocation';
-import { parseGoogleMapsUrl, isGoogleMapsUrl, ParseResult, batchParseGoogleMapsUrls, BatchParseResult } from '../src/services/googleMapsUrlParser';
-import { PlaceSearchResult } from '../src/types/models';
-
+import AddFavoriteModal from '../src/components/features/AddFavoriteModal';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 
@@ -66,18 +62,28 @@ export default function FavoritesScreen() {
     const router = useRouter();
     const {
         favorites,
-        queue,
+        groups,
+        activeGroupId,
+        groupQueues,
         removeFavorite,
         addFavorite,
         updateFavoriteName,
         updateFavoriteNote,
         reorderQueue,
         findDuplicate,
+        createGroup,
+        renameGroup,
+        deleteGroup,
+        setActiveGroup,
+        getNextGroupName,
     } = useFavoriteStore();
     const transportMode = useUserStore((s) => s.transportMode);
     const { jumpToMap } = useMapJump();
-    const { location } = useLocation();
-    const { results: searchResults, loading: searchLoading, error: searchError, searchImmediate, clearResults } = usePlaceSearch();
+
+    // ── 群組內餐廳 & queue ──
+    const queue = groupQueues[activeGroupId] ?? [];
+    const groupFavorites = favorites.filter((f) => f.groupId === activeGroupId);
+    const activeGroup = groups.find((g) => g.id === activeGroupId);
 
     // ── 狀態 ──
     const [isEditing, setIsEditing] = useState(false);
@@ -86,59 +92,19 @@ export default function FavoritesScreen() {
     const [editTarget, setEditTarget] = useState<FavoriteRestaurant | null>(null);
     const [editName, setEditName] = useState('');
     const [editNote, setEditNote] = useState('');
-    const [newName, setNewName] = useState('');
-    const [newNote, setNewNote] = useState('');
 
-    // ── 新增 Modal 多模式狀態 ──
-    const [addMode, setAddMode] = useState<'search' | 'manual' | 'paste'>('search');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [selectedPlace, setSelectedPlace] = useState<PlaceSearchResult | null>(null);
+    // ── 群組管理狀態 ──
+    const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+    const [createGroupName, setCreateGroupName] = useState('');
+    const [showRenameGroupModal, setShowRenameGroupModal] = useState(false);
+    const [renameGroupTarget, setRenameGroupTarget] = useState<FavoriteGroup | null>(null);
+    const [renameGroupName, setRenameGroupName] = useState('');
+    const [showGroupMenu, setShowGroupMenu] = useState<string | null>(null); // 顯示哪個群組的三點選單
 
-    // ── 貼上連結狀態 ──
-    const [pasteUrl, setPasteUrl] = useState('');
-    const [pasteLoading, setPasteLoading] = useState(false);
-    const [pasteResult, setPasteResult] = useState<ParseResult | null>(null);
 
-    // ── 批量匯入狀態 ──
-    const [batchResults, setBatchResults] = useState<BatchParseResult | null>(null);
-    const [batchImporting, setBatchImporting] = useState(false);
 
-    // ── 剪貼簿自動偵測：切換到貼上模式時自動讀取 ──
-    useEffect(() => {
-        if (addMode !== 'paste' || !showAddModal) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const text = await Clipboard.getStringAsync();
-                if (cancelled || !text) return;
-                const trimmed = text.trim();
-                if (isGoogleMapsUrl(trimmed)) {
-                    setPasteUrl(trimmed);
-                    // 自動觸發解析
-                    setPasteLoading(true);
-                    setPasteResult(null);
-                    try {
-                        const userLoc = (location?.latitude != null && location?.longitude != null) ? { lat: location.latitude, lng: location.longitude } : null;
-                        const result = await parseGoogleMapsUrl(trimmed, userLoc);
-                        if (!cancelled) setPasteResult(result);
-                    } catch (err: unknown) {
-                        if (!cancelled) {
-                            const msg = err instanceof Error ? err.message : '解析失敗';
-                            setPasteResult({ restaurant: null, error: msg, source: 'failed' });
-                        }
-                    } finally {
-                        if (!cancelled) setPasteLoading(false);
-                    }
-                }
-            } catch {
-                // 剪貼簿讀取失敗（權限問題等）——靜默略過
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [addMode, showAddModal]);
-
-    // ── 按佇列順序排列 favorites ──
-    const sortedByQueue = [...favorites].sort((a, b) => {
+    // ── 按佇列順序排列 favorites（限啟用群組） ──
+    const sortedByQueue = [...groupFavorites].sort((a, b) => {
         const ai = queue.indexOf(a.id);
         const bi = queue.indexOf(b.id);
         // 不在佇列中的排最後
@@ -146,6 +112,87 @@ export default function FavoritesScreen() {
         const bPriority = bi === -1 ? Infinity : bi;
         return aPriority - bPriority;
     });
+
+    // ── 群組管理 Handlers ──
+    const handleCreateGroup = useCallback(() => {
+        const trimmed = createGroupName.trim();
+        const result = createGroup(trimmed || undefined);
+        if (result) {
+            setShowCreateGroupModal(false);
+            setCreateGroupName('');
+            // 自動切換到新群組
+            setActiveGroup(result.id);
+        } else {
+            if (Platform.OS === 'web') {
+                window.alert('已達群組上限（最多 10 個）');
+            } else {
+                Alert.alert('已達群組上限', '最多只能建立 10 個群組');
+            }
+        }
+    }, [createGroupName, createGroup, setActiveGroup]);
+
+    const handleRenameGroupConfirm = useCallback(() => {
+        if (!renameGroupTarget) return;
+        const trimmed = renameGroupName.trim();
+        if (!trimmed) {
+            if (Platform.OS === 'web') {
+                window.alert('群組名稱不可為空');
+            } else {
+                Alert.alert('群組名稱不可為空');
+            }
+            return;
+        }
+        renameGroup(renameGroupTarget.id, trimmed);
+        setShowRenameGroupModal(false);
+        setRenameGroupTarget(null);
+        setRenameGroupName('');
+    }, [renameGroupTarget, renameGroupName, renameGroup]);
+
+    const handleDeleteGroup = useCallback((group: FavoriteGroup) => {
+        if (groups.length <= 1) {
+            if (Platform.OS === 'web') {
+                window.alert('不能刪除最後一個群組');
+            } else {
+                Alert.alert('無法刪除', '至少需要保留一個群組');
+            }
+            return;
+        }
+
+        const groupFavCount = favorites.filter((f) => f.groupId === group.id).length;
+        const message = groupFavCount > 0
+            ? `確定要刪除「${group.name}」嗎？\n群組內的 ${groupFavCount} 家餐廳也會一併移除。`
+            : `確定要刪除「${group.name}」嗎？`;
+
+        if (Platform.OS === 'web') {
+            const confirmed = window.confirm(message);
+            if (confirmed) deleteGroup(group.id);
+        } else {
+            Alert.alert('刪除群組', message, [
+                { text: '取消', style: 'cancel' },
+                { text: '刪除', style: 'destructive', onPress: () => deleteGroup(group.id) },
+            ]);
+        }
+    }, [groups, favorites, deleteGroup]);
+
+    const openRenameGroupModal = useCallback((group: FavoriteGroup) => {
+        setRenameGroupTarget(group);
+        setRenameGroupName(group.name);
+        setShowRenameGroupModal(true);
+        setShowGroupMenu(null);
+    }, []);
+
+    const openCreateGroupModal = useCallback(() => {
+        if (groups.length >= MAX_GROUPS) {
+            if (Platform.OS === 'web') {
+                window.alert('已達群組上限（最多 10 個）');
+            } else {
+                Alert.alert('已達群組上限', '最多只能建立 10 個群組');
+            }
+            return;
+        }
+        setCreateGroupName(getNextGroupName());
+        setShowCreateGroupModal(true);
+    }, [groups.length, getNextGroupName]);
 
     // ── Header 返回 ──
     const handleBack = () => {
@@ -170,192 +217,6 @@ export default function FavoritesScreen() {
         }
     };
 
-    // ── 搜尋按鈕處理 ──
-    const handleSearch = useCallback(() => {
-        searchImmediate(searchQuery, location?.latitude && location?.longitude ? { lat: location.latitude, lng: location.longitude } : undefined);
-    }, [searchQuery, searchImmediate, location]);
-
-    // ── 從搜尋結果新增（含重複防呆） ──
-    const handleAddFromSearch = useCallback(() => {
-        if (!selectedPlace) {
-            Alert.alert('請先選擇一家餐廳');
-            return;
-        }
-        const dup = findDuplicate(selectedPlace.name, selectedPlace.placeId);
-        const doAdd = () => {
-            addFavorite(selectedPlace.name, newNote.trim() || undefined, {
-                address: selectedPlace.address,
-                category: selectedPlace.category,
-                placeId: selectedPlace.placeId,
-                latitude: selectedPlace.latitude,
-                longitude: selectedPlace.longitude,
-            });
-            resetAddModal();
-            Alert.alert('✅ 新增成功', `「${selectedPlace.name}」已加入最愛清單`);
-        };
-        if (dup) {
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [selectedPlace, newNote, addFavorite, findDuplicate]);
-
-    // ── 手動新增（含重複防呆） ──
-    const handleAddManual = useCallback(() => {
-        const trimmed = newName.trim();
-        if (!trimmed) {
-            Alert.alert('請輸入餐廳名稱');
-            return;
-        }
-        const dup = findDuplicate(trimmed);
-        const doAdd = () => {
-            addFavorite(trimmed, newNote.trim() || undefined);
-            resetAddModal();
-            Alert.alert('✅ 新增成功', `「${trimmed}」已加入最愛清單`);
-        };
-        if (dup) {
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [newName, newNote, addFavorite, findDuplicate]);
-
-    // ── 貼上連結解析（單一 or 批量） ──
-    const handlePasteUrl = useCallback(async () => {
-        const trimmed = pasteUrl.trim();
-        if (!trimmed) {
-            Alert.alert('請貼上 Google Maps 連結');
-            return;
-        }
-        // 偵測多行 URL → 批量模式
-        const lines = trimmed.split(/[\n\r]+/).filter((l) => l.trim().length > 0);
-        const validLines = lines.filter((l) => isGoogleMapsUrl(l.trim()));
-        if (validLines.length > 1) {
-            // 批量模式
-            setPasteLoading(true);
-            setBatchResults(null);
-            setPasteResult(null);
-            try {
-                const result = await batchParseGoogleMapsUrls(trimmed);
-                setBatchResults(result);
-            } catch (err: unknown) {
-                const msg = err instanceof Error ? err.message : '批量解析失敗';
-                Alert.alert('解析失敗', msg);
-            } finally {
-                setPasteLoading(false);
-            }
-            return;
-        }
-        // 單一 URL 模式
-        if (!isGoogleMapsUrl(trimmed)) {
-            Alert.alert('無效連結', '請貼上 Google Maps 的分享連結');
-            return;
-        }
-        setPasteLoading(true);
-        setPasteResult(null);
-        setBatchResults(null);
-        try {
-            const userLoc = (location?.latitude != null && location?.longitude != null) ? { lat: location.latitude, lng: location.longitude } : null;
-            const result = await parseGoogleMapsUrl(trimmed, userLoc);
-            setPasteResult(result);
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : '解析失敗';
-            setPasteResult({ restaurant: null, error: msg, source: 'failed' });
-        } finally {
-            setPasteLoading(false);
-        }
-    }, [pasteUrl]);
-
-    // ── 從貼上連結結果新增（單一，含重複防呆） ──
-    const handleAddFromPaste = useCallback(() => {
-        if (!pasteResult?.restaurant) {
-            Alert.alert('請先解析連結並確認餐廳資訊');
-            return;
-        }
-        const r = pasteResult.restaurant;
-        const dup = findDuplicate(r.name, r.placeId);
-        const doAdd = () => {
-            addFavorite(r.name, newNote.trim() || undefined, {
-                address: r.address,
-                category: r.category,
-                placeId: r.placeId,
-                latitude: r.latitude,
-                longitude: r.longitude,
-            });
-            resetAddModal();
-            Alert.alert('✅ 新增成功', `「${r.name}」已加入最愛清單`);
-        };
-        if (dup) {
-            // Web 上 Alert.alert 帶按鈕回調可能不觸發，改用 window.confirm
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                const confirmed = window.confirm(`⚠️ 「${dup.name}」已在清單中，仍要新增嗎？`);
-                if (confirmed) doAdd();
-                return;
-            }
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [pasteResult, newNote, addFavorite, findDuplicate]);
-
-    // ── 批量新增所有成功解析的餐廳（含重複過濾） ──
-    const handleBatchAdd = useCallback(() => {
-        if (!batchResults) return;
-        const successItems = batchResults.results.filter((r) => r.restaurant !== null);
-        if (successItems.length === 0) {
-            Alert.alert('沒有可新增的餐廳');
-            return;
-        }
-        setBatchImporting(true);
-        let addedCount = 0;
-        let skippedCount = 0;
-        for (const item of successItems) {
-            const r = item.restaurant!;
-            const dup = findDuplicate(r.name, r.placeId);
-            if (dup) {
-                skippedCount++;
-                continue;
-            }
-            addFavorite(r.name, undefined, {
-                address: r.address,
-                category: r.category,
-                placeId: r.placeId,
-                latitude: r.latitude,
-                longitude: r.longitude,
-            });
-            addedCount++;
-        }
-        setBatchImporting(false);
-        resetAddModal();
-        const msg = skippedCount > 0
-            ? `成功新增 ${addedCount} 家，${skippedCount} 家已存在已略過`
-            : `成功新增 ${addedCount} 家餐廳`;
-        Alert.alert('✅ 批量匯入完成', msg);
-    }, [batchResults, addFavorite, findDuplicate]);
-
-    // ── 重置新增 Modal 所有狀態 ──
-    const resetAddModal = useCallback(() => {
-        setShowAddModal(false);
-        setSearchQuery('');
-        setSelectedPlace(null);
-        setNewName('');
-        setNewNote('');
-        setPasteUrl('');
-        setPasteResult(null);
-        setBatchResults(null);
-        setBatchImporting(false);
-        clearResults();
-        setAddMode('search');
-    }, [clearResults]);
 
     // ── 開啟編輯 Modal ──
     const openEditModal = (item: FavoriteRestaurant) => {
@@ -413,319 +274,221 @@ export default function FavoritesScreen() {
     }, [sortedByQueue, reorderQueue]);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // RENDER: 新增餐廳 Modal（三模式：搜尋 / 手動 / 貼上連結）
+    // RENDER: 群組 Tab 列
     // ═══════════════════════════════════════════════════════════════════════
-    function renderAddModal() {
+    function renderGroupTabs() {
         return (
-            <Modal visible={showAddModal} transparent animationType="slide">
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={addModalStyles.overlay}
+            <View style={groupStyles.tabContainer}>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={groupStyles.tabScroll}
+                    style={groupStyles.tabScrollView}
                 >
-                    <View style={[addModalStyles.content, { maxHeight: '85%' }]}>
-                        <Text style={addModalStyles.title}>新增最愛餐廳</Text>
-
-                        {/* 模式切換 Tab */}
-                        <View style={addModalStyles.modeTabRow}>
-                            <Pressable
-                                onPress={() => setAddMode('search')}
-                                style={[addModalStyles.modeTab, addMode === 'search' && addModalStyles.modeTabActive]}
-                            >
-                                <Ionicons name="search-outline" size={16} color={addMode === 'search' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[addModalStyles.modeTabText, addMode === 'search' && addModalStyles.modeTabTextActive]}>搜尋餐廳</Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => setAddMode('manual')}
-                                style={[addModalStyles.modeTab, addMode === 'manual' && addModalStyles.modeTabActive]}
-                            >
-                                <Ionicons name="pencil-outline" size={16} color={addMode === 'manual' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[addModalStyles.modeTabText, addMode === 'manual' && addModalStyles.modeTabTextActive]}>手動輸入</Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => setAddMode('paste')}
-                                style={[addModalStyles.modeTab, addMode === 'paste' && addModalStyles.modeTabActive]}
-                            >
-                                <Ionicons name="link-outline" size={16} color={addMode === 'paste' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[addModalStyles.modeTabText, addMode === 'paste' && addModalStyles.modeTabTextActive]}>貼上連結</Text>
-                            </Pressable>
-                        </View>
-
-                        {addMode === 'search' ? (
-                            <>
-                                {/* 搜尋列 */}
-                                <Text style={addModalStyles.inputLabel}>餐廳名稱 *</Text>
-                                <View style={addModalStyles.searchRow}>
-                                    <TextInput
-                                        style={[addModalStyles.input, { flex: 1, marginBottom: 0 }]}
-                                        placeholder="搜尋餐廳名稱（如：鼎泰豐）"
-                                        placeholderTextColor={theme.colors.textSecondary}
-                                        value={searchQuery}
-                                        onChangeText={setSearchQuery}
-                                        onSubmitEditing={handleSearch}
-                                        autoFocus
-                                        returnKeyType="search"
-                                    />
-                                    <Pressable
-                                        onPress={handleSearch}
-                                        style={({ pressed }) => [addModalStyles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                    {groups.map((group) => {
+                        const isActive = group.id === activeGroupId;
+                        const showMenu = showGroupMenu === group.id;
+                        return (
+                            <View key={group.id} style={groupStyles.tabItem}>
+                                <Pressable
+                                    onPress={() => {
+                                        setActiveGroup(group.id);
+                                        setShowGroupMenu(null);
+                                    }}
+                                    style={({ pressed }) => [
+                                        groupStyles.tab,
+                                        isActive && groupStyles.tabActive,
+                                        pressed && { opacity: theme.interaction.pressedOpacity },
+                                    ]}
+                                    accessibilityRole="tab"
+                                    accessibilityState={{ selected: isActive }}
+                                >
+                                    <Text
+                                        style={[
+                                            groupStyles.tabText,
+                                            isActive && groupStyles.tabTextActive,
+                                        ]}
+                                        numberOfLines={1}
                                     >
-                                        <Ionicons name="search" size={20} color={theme.colors.onPrimary} />
-                                    </Pressable>
-                                </View>
-
-                                {/* 搜尋狀態 */}
-                                {searchLoading && (
-                                    <View style={addModalStyles.searchStatusRow}>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text style={addModalStyles.searchStatusText}>搜尋中...</Text>
-                                    </View>
-                                )}
-                                {searchError && (
-                                    <Text style={addModalStyles.searchErrorText}>{searchError}</Text>
-                                )}
-
-                                {/* 搜尋結果列表 */}
-                                {searchResults.length > 0 && (
-                                    <FlatList
-                                        data={searchResults}
-                                        keyExtractor={(item) => item.placeId}
-                                        style={{ maxHeight: 220, marginBottom: theme.spacing.md }}
-                                        renderItem={({ item }) => {
-                                            const isSelected = selectedPlace?.placeId === item.placeId;
-                                            return (
-                                                <Pressable
-                                                    onPress={() => setSelectedPlace(item)}
-                                                    style={[addModalStyles.searchResultItem, isSelected && addModalStyles.searchResultItemSelected]}
-                                                >
-                                                    <View style={{ flex: 1 }}>
-                                                        <Text style={addModalStyles.searchResultName}>{item.name}</Text>
-                                                        <Text style={addModalStyles.searchResultAddress}>{item.address}</Text>
-                                                        <View style={addModalStyles.searchResultMeta}>
-                                                            <Text style={addModalStyles.searchResultCategory}>{item.category}</Text>
-                                                            {item.rating > 0 && (
-                                                                <Text style={addModalStyles.searchResultRating}>⭐ {item.rating.toFixed(1)}</Text>
-                                                            )}
-                                                            <Text style={[addModalStyles.searchResultOpen, { color: item.isOpenNow ? theme.colors.success : theme.colors.error }]}>
-                                                                {item.isOpenNow ? '營業中' : '已打烊'}
-                                                            </Text>
-                                                        </View>
-                                                    </View>
-                                                    {isSelected && (
-                                                        <Ionicons name="checkmark-circle" size={24} color={theme.colors.primary} />
-                                                    )}
-                                                </Pressable>
-                                            );
-                                        }}
-                                        ItemSeparatorComponent={() => <View style={addModalStyles.separator} />}
+                                        {group.name}
+                                    </Text>
+                                </Pressable>
+                                {/* 三點選單 */}
+                                <Pressable
+                                    onPress={() => setShowGroupMenu(showMenu ? null : group.id)}
+                                    hitSlop={6}
+                                    style={({ pressed }) => [
+                                        groupStyles.menuBtn,
+                                        pressed && { opacity: theme.interaction.pressedOpacity },
+                                    ]}
+                                    accessibilityLabel={`管理群組 ${group.name}`}
+                                >
+                                    <Ionicons
+                                        name="ellipsis-vertical"
+                                        size={14}
+                                        color={isActive ? theme.colors.primary : theme.colors.textSecondary}
                                     />
-                                )}
+                                </Pressable>
+                            </View>
+                        );
+                    })}
 
-                                {/* 已選擇的餐廳預覽 */}
-                                {selectedPlace && (
-                                    <View style={addModalStyles.selectedPreview}>
-                                        <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                        <Text style={addModalStyles.selectedPreviewText}>已選擇：{selectedPlace.name}</Text>
-                                    </View>
-                                )}
-
-
-                            </>
-                        ) : addMode === 'manual' ? (
-                            <>
-                                {/* 手動輸入模式 */}
-                                <Text style={addModalStyles.inputLabel}>餐廳名稱 *</Text>
-                                <TextInput
-                                    style={addModalStyles.input}
-                                    placeholder="例如：鼎泰豐"
-                                    placeholderTextColor={theme.colors.textSecondary}
-                                    value={newName}
-                                    onChangeText={setNewName}
-                                    autoFocus
-                                />
-
-                                <Text style={addModalStyles.inputLabel}>備註（選填）</Text>
-                                <TextInput
-                                    style={addModalStyles.input}
-                                    placeholder="例如：推薦小籠包"
-                                    placeholderTextColor={theme.colors.textSecondary}
-                                    value={newNote}
-                                    onChangeText={setNewNote}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                {/* 貼上連結模式 */}
-                                <Text style={addModalStyles.inputLabel}>貼上 Google Maps 分享連結</Text>
-                                <View style={addModalStyles.searchRow}>
-                                    <TextInput
-                                        style={[addModalStyles.input, { flex: 1, marginBottom: 0, minHeight: 44 }]}
-                                        placeholder="https://maps.app.goo.gl/...
-可貼上多個連結（每行一個）"
-                                        placeholderTextColor={theme.colors.textSecondary}
-                                        value={pasteUrl}
-                                        onChangeText={(text) => {
-                                            setPasteUrl(text);
-                                            setPasteResult(null);
-                                            setBatchResults(null);
-                                        }}
-                                        onSubmitEditing={handlePasteUrl}
-                                        autoFocus
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                        multiline
-                                        numberOfLines={3}
-                                        textAlignVertical="top"
-                                    />
-                                    <Pressable
-                                        onPress={handlePasteUrl}
-                                        style={({ pressed }) => [addModalStyles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
-                                        disabled={pasteLoading}
-                                    >
-                                        {pasteLoading ? (
-                                            <ActivityIndicator size="small" color={theme.colors.onPrimary} />
-                                        ) : (
-                                            <Ionicons name="arrow-forward" size={20} color={theme.colors.onPrimary} />
-                                        )}
-                                    </Pressable>
-                                </View>
-
-                                {/* 解析狀態 */}
-                                {pasteLoading && (
-                                    <View style={addModalStyles.searchStatusRow}>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text style={addModalStyles.searchStatusText}>解析連結中...</Text>
-                                    </View>
-                                )}
-
-                                {/* 解析錯誤 */}
-                                {pasteResult?.error && (
-                                    <View style={addModalStyles.pasteErrorContainer}>
-                                        <Ionicons name="alert-circle-outline" size={18} color={theme.colors.error} />
-                                        <Text style={addModalStyles.searchErrorText}>{pasteResult.error}</Text>
-                                    </View>
-                                )}
-
-                                {/* 解析結果預覽 */}
-                                {pasteResult?.restaurant && (
-                                    <View style={addModalStyles.pasteResultPreview}>
-                                        <View style={addModalStyles.selectedPreview}>
-                                            <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                            <Text style={addModalStyles.selectedPreviewText}>{pasteResult.restaurant.name}</Text>
-                                        </View>
-                                        <Text style={addModalStyles.pasteResultAddress}>📍 {pasteResult.restaurant.address}</Text>
-                                        <View style={addModalStyles.searchResultMeta}>
-                                            <Text style={addModalStyles.searchResultCategory}>{pasteResult.restaurant.category}</Text>
-                                            {pasteResult.restaurant.rating > 0 && (
-                                                <Text style={addModalStyles.searchResultRating}>⭐ {pasteResult.restaurant.rating.toFixed(1)}</Text>
-                                            )}
-                                            <Text style={[addModalStyles.searchResultOpen, { color: pasteResult.restaurant.isOpenNow ? theme.colors.success : theme.colors.error }]}>
-                                                {pasteResult.restaurant.isOpenNow ? '營業中' : '已打烊'}
-                                            </Text>
-                                        </View>
-
-
-                                    </View>
-                                )}
-
-                                {/* 備註 */}
-                                {pasteResult?.restaurant && (
+                    {/* ＋ 新增群組按鈕 */}
+                    <Pressable
+                        onPress={openCreateGroupModal}
+                        disabled={groups.length >= MAX_GROUPS}
+                        style={({ pressed }) => [
+                            groupStyles.addGroupBtn,
+                            pressed && { opacity: theme.interaction.pressedOpacity },
+                            groups.length >= MAX_GROUPS && { opacity: 0.3 },
+                        ]}
+                        accessibilityLabel="新增群組"
+                    >
+                        <Ionicons name="add" size={18} color={theme.colors.primary} />
+                    </Pressable>
+                </ScrollView>
+                {groups.length >= MAX_GROUPS && (
+                    <Text style={groupStyles.limitHint}>已達群組上限</Text>
+                )}
+                {/* 群組三點選單 — 使用 Modal 避免被 ScrollView 裁切 */}
+                <Modal visible={showGroupMenu !== null} transparent animationType="fade">
+                    <Pressable
+                        style={groupStyles.menuOverlay}
+                        onPress={() => setShowGroupMenu(null)}
+                    >
+                        <View style={groupStyles.menuPopup}>
+                            {(() => {
+                                const targetGroup = groups.find(g => g.id === showGroupMenu);
+                                if (!targetGroup) return null;
+                                return (
                                     <>
-                                        <Text style={addModalStyles.inputLabel}>備註（選填）</Text>
-                                        <TextInput
-                                            style={addModalStyles.input}
-                                            placeholder="例如：朋友推薦"
-                                            placeholderTextColor={theme.colors.textSecondary}
-                                            value={newNote}
-                                            onChangeText={setNewNote}
-                                        />
+                                        <Text style={groupStyles.menuPopupTitle}>{targetGroup.name}</Text>
+                                        <View style={groupStyles.dropdownDivider} />
+                                        <Pressable
+                                            onPress={() => openRenameGroupModal(targetGroup)}
+                                            style={({ pressed }) => [
+                                                groupStyles.dropdownItem,
+                                                pressed && { backgroundColor: theme.colors.background },
+                                            ]}
+                                        >
+                                            <Ionicons name="pencil-outline" size={16} color={theme.colors.text} />
+                                            <Text style={groupStyles.dropdownText}>重新命名</Text>
+                                        </Pressable>
+                                        <View style={groupStyles.dropdownDivider} />
+                                        <Pressable
+                                            onPress={() => {
+                                                setShowGroupMenu(null);
+                                                handleDeleteGroup(targetGroup);
+                                            }}
+                                            disabled={groups.length <= 1}
+                                            style={({ pressed }) => [
+                                                groupStyles.dropdownItem,
+                                                pressed && { backgroundColor: theme.colors.background },
+                                                groups.length <= 1 && { opacity: 0.4 },
+                                            ]}
+                                        >
+                                            <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
+                                            <Text style={[groupStyles.dropdownText, { color: theme.colors.error }]}>刪除群組</Text>
+                                        </Pressable>
                                     </>
-                                )}
-
-                                {/* 批量解析結果 */}
-                                {batchResults && (
-                                    <View style={addModalStyles.pasteResultPreview}>
-                                        <View style={addModalStyles.selectedPreview}>
-                                            <Ionicons name="layers-outline" size={18} color={theme.colors.primary} />
-                                            <Text style={[addModalStyles.selectedPreviewText, { color: theme.colors.primary }]}>
-                                                偵測到 {batchResults.results.length} 個連結：{batchResults.successCount} 個成功、{batchResults.failedCount} 個失敗
-                                            </Text>
-                                        </View>
-                                        <View style={{ marginTop: theme.spacing.sm }}>
-                                            {batchResults.results.map((r, i) => (
-                                                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, paddingVertical: 4 }}>
-                                                    <Ionicons
-                                                        name={r.restaurant ? 'checkmark-circle' : 'close-circle'}
-                                                        size={16}
-                                                        color={r.restaurant ? theme.colors.success : theme.colors.error}
-                                                    />
-                                                    <Text style={[addModalStyles.searchResultName, { fontSize: 13, flex: 1 }]} numberOfLines={1}>
-                                                        {r.restaurant ? r.restaurant.name : (r.error || '解析失敗')}
-                                                    </Text>
-                                                    {r.restaurant?.category && (
-                                                        <Text style={[addModalStyles.searchResultCategory, { fontSize: 11 }]}>{r.restaurant.category}</Text>
-                                                    )}
-                                                </View>
-                                            ))}
-                                        </View>
-                                    </View>
-                                )}
-                            </>
-                        )}
-
-                        {/* 底部按鈕 */}
-                        <View style={addModalStyles.actions}>
-                            <Pressable
-                                style={({ pressed }) => [addModalStyles.btn, addModalStyles.cancelBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
-                                onPress={resetAddModal}
-                            >
-                                <Text style={addModalStyles.cancelText}>取消</Text>
-                            </Pressable>
-                            <Pressable
-                                style={({ pressed }) => [
-                                    addModalStyles.btn, addModalStyles.confirmBtn,
-                                    pressed && { opacity: theme.interaction.pressedOpacity },
-                                    (addMode === 'search' && !selectedPlace) && { opacity: 0.4 },
-                                    (addMode === 'paste' && !pasteResult?.restaurant && !batchResults) && { opacity: 0.4 },
-                                ]}
-                                onPress={
-                                    addMode === 'search' ? handleAddFromSearch
-                                        : addMode === 'paste'
-                                            ? (batchResults ? handleBatchAdd : handleAddFromPaste)
-                                            : handleAddManual
-                                }
-                                disabled={
-                                    (addMode === 'search' && !selectedPlace)
-                                    || (addMode === 'paste' && !pasteResult?.restaurant && !batchResults)
-                                    || batchImporting
-                                }
-                            >
-                                <Text style={addModalStyles.confirmText}>
-                                    {batchResults
-                                        ? (batchImporting ? '匯入中...' : `全部新增 (${batchResults.successCount})`)
-                                        : '確認新增'
-                                    }
-                                </Text>
-                            </Pressable>
+                                );
+                            })()}
                         </View>
-                    </View>
-                </KeyboardAvoidingView>
-            </Modal>
+                    </Pressable>
+                </Modal>
+            </View>
         );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // RENDER: 空狀態
+    // RENDER: 群組管理 Modals
     // ═══════════════════════════════════════════════════════════════════════
-    if (favorites.length === 0) {
+    function renderGroupModals() {
+        return (
+            <>
+                {/* 建立群組 Modal */}
+                <Modal visible={showCreateGroupModal} transparent animationType="fade">
+                    <View style={groupStyles.modalOverlay}>
+                        <View style={groupStyles.modalContent}>
+                            <Text style={groupStyles.modalTitle}>建立新群組</Text>
+                            <TextInput
+                                style={groupStyles.modalInput}
+                                placeholder="群組名稱"
+                                placeholderTextColor={theme.colors.textSecondary}
+                                value={createGroupName}
+                                onChangeText={setCreateGroupName}
+                                autoFocus
+                                maxLength={20}
+                            />
+                            <View style={groupStyles.modalActions}>
+                                <Pressable
+                                    onPress={() => { setShowCreateGroupModal(false); setCreateGroupName(''); }}
+                                    style={({ pressed }) => [groupStyles.modalBtn, groupStyles.modalCancelBtn, pressed && { opacity: 0.6 }]}
+                                >
+                                    <Text style={groupStyles.modalCancelText}>取消</Text>
+                                </Pressable>
+                                <Pressable
+                                    onPress={handleCreateGroup}
+                                    style={({ pressed }) => [groupStyles.modalBtn, groupStyles.modalConfirmBtn, pressed && { opacity: 0.6 }]}
+                                >
+                                    <Text style={groupStyles.modalConfirmText}>建立</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* 重命名群組 Modal */}
+                <Modal visible={showRenameGroupModal} transparent animationType="fade">
+                    <View style={groupStyles.modalOverlay}>
+                        <View style={groupStyles.modalContent}>
+                            <Text style={groupStyles.modalTitle}>重新命名群組</Text>
+                            <TextInput
+                                style={groupStyles.modalInput}
+                                placeholder="新名稱"
+                                placeholderTextColor={theme.colors.textSecondary}
+                                value={renameGroupName}
+                                onChangeText={setRenameGroupName}
+                                autoFocus
+                                maxLength={20}
+                            />
+                            <View style={groupStyles.modalActions}>
+                                <Pressable
+                                    onPress={() => { setShowRenameGroupModal(false); setRenameGroupTarget(null); }}
+                                    style={({ pressed }) => [groupStyles.modalBtn, groupStyles.modalCancelBtn, pressed && { opacity: 0.6 }]}
+                                >
+                                    <Text style={groupStyles.modalCancelText}>取消</Text>
+                                </Pressable>
+                                <Pressable
+                                    onPress={handleRenameGroupConfirm}
+                                    style={({ pressed }) => [groupStyles.modalBtn, groupStyles.modalConfirmBtn, pressed && { opacity: 0.6 }]}
+                                >
+                                    <Text style={groupStyles.modalConfirmText}>確定</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+            </>
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // RENDER: 空狀態（群組內無餐廳）
+    // ═══════════════════════════════════════════════════════════════════════
+    if (groupFavorites.length === 0) {
         return (
             <View style={styles.screenContainer}>
                 <HeaderBar isEditing={false} onBack={handleBack} onToggleEdit={() => {}} hideEdit />
                 <View style={styles.divider} />
+                {renderGroupTabs()}
                 <View style={styles.emptyContainer}>
                     <View style={styles.emptyIconWrap}>
                         <Ionicons name="heart-outline" size={72} color={theme.colors.primary + '80'} />
                     </View>
-                    <Text style={styles.emptyTitle}>還沒有最愛餐廳</Text>
+                    <Text style={styles.emptyTitle}>
+                        {activeGroup ? `「${activeGroup.name}」還沒有餐廳` : '還沒有最愛餐廳'}
+                    </Text>
                     <Text style={styles.emptyDesc}>
                         去附近逛逛，找到喜歡的餐廳加入最愛吧！
                     </Text>
@@ -746,7 +509,8 @@ export default function FavoritesScreen() {
                         <Text style={styles.ctaBtnSecondaryText}>手動新增</Text>
                     </Pressable>
                 </View>
-                {showAddModal && renderAddModal()}
+                <AddFavoriteModal visible={showAddModal} onClose={() => setShowAddModal(false)} />
+                {renderGroupModals()}
             </View>
         );
     }
@@ -764,6 +528,7 @@ export default function FavoritesScreen() {
                 onToggleEdit={() => setIsEditing((v) => !v)}
             />
             <View style={styles.divider} />
+            {renderGroupTabs()}
 
             {/* ── 2. Card List ── */}
             {isEditing ? (
@@ -836,7 +601,9 @@ export default function FavoritesScreen() {
             )}
 
             {/* ── 新增 Modal（三模式：搜尋/手動/貼上連結） ── */}
-            {showAddModal && renderAddModal()}
+            {/* ── 新增 Modal ── */}
+            <AddFavoriteModal visible={showAddModal} onClose={() => setShowAddModal(false)} onAdded={() => { /* 可以選擇加上一些動作 */ }} />
+            {renderGroupModals()}
 
             {/* ── 編輯 Modal ── */}
             <EditModal
@@ -1479,204 +1246,163 @@ const modalStyles = StyleSheet.create({
     },
 });
 
-// ── Add Modal Styles（三模式新增 Modal 專用）──
-const addModalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: theme.colors.overlay,
-        justifyContent: 'center',
-        padding: theme.spacing.lg,
-    },
-    content: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.borderRadius.lg,
-        padding: theme.spacing.xl,
-    },
-    title: {
-        ...theme.typography.h3,
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-        marginBottom: theme.spacing.lg,
-    },
-    // ── 模式切換 Tab ──
-    modeTabRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.lg,
-    },
-    modeTab: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
+
+// ── 群組 Tab & 管理選單 Styles ──
+const groupStyles = StyleSheet.create({
+    tabContainer: {
         backgroundColor: theme.colors.background,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border,
+        paddingBottom: theme.spacing.xs,
     },
-    modeTabActive: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
+    tabScrollView: {
+        flexGrow: 0,
     },
-    modeTabText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        fontWeight: '600',
-    },
-    modeTabTextActive: {
-        color: theme.colors.onPrimary,
-    },
-    // ── 搜尋列 ──
-    searchRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        alignItems: 'center',
-        marginBottom: theme.spacing.md,
-    },
-    searchBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchStatusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.sm,
-    },
-    searchStatusText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-    },
-    searchErrorText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.error,
-        marginBottom: theme.spacing.sm,
-    },
-    // ── 搜尋結果列表 ──
-    searchResultItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-    },
-    searchResultItemSelected: {
-        backgroundColor: `${theme.colors.primary}12`,
-    },
-    searchResultName: {
-        ...theme.typography.body,
-        fontWeight: '600',
-        color: theme.colors.text,
-    },
-    searchResultAddress: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-        marginTop: 2,
-    },
-    searchResultMeta: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginTop: 4,
-    },
-    searchResultCategory: {
-        ...theme.typography.caption,
-        color: theme.colors.primary,
-        fontWeight: '600',
-    },
-    searchResultRating: {
-        ...theme.typography.caption,
-        color: theme.colors.star,
-    },
-    searchResultOpen: {
-        ...theme.typography.caption,
-        fontWeight: '500',
-    },
-    // ── 已選擇預覽 ──
-    selectedPreview: {
-        flexDirection: 'row',
-        alignItems: 'center',
+    tabScroll: {
+        paddingHorizontal: theme.spacing.md,
+        paddingTop: theme.spacing.sm,
+        paddingBottom: theme.spacing.xs,
         gap: theme.spacing.xs,
-        backgroundColor: `${theme.colors.success}12`,
+        alignItems: 'center',
+    },
+    tabItem: {
+        position: 'relative' as const,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    tab: {
         paddingHorizontal: theme.spacing.md,
         paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        marginBottom: theme.spacing.md,
-    },
-    selectedPreviewText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.success,
-        fontWeight: '600',
-    },
-    // ── 貼上連結模式 ──
-    pasteErrorContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        marginBottom: theme.spacing.sm,
-        paddingHorizontal: theme.spacing.sm,
-    },
-    pasteResultPreview: {
-        backgroundColor: `${theme.colors.primary}08`,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        marginBottom: theme.spacing.md,
-        borderWidth: 1,
-        borderColor: `${theme.colors.primary}20`,
-    },
-    pasteResultAddress: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.sm,
-    },
-    // ── 表單元素 ──
-    inputLabel: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.xs,
-    },
-    input: {
+        borderRadius: theme.borderRadius.full,
+        backgroundColor: theme.colors.surface,
         borderWidth: 1,
         borderColor: theme.colors.border,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        ...theme.typography.body,
-        marginBottom: theme.spacing.md,
+    },
+    tabActive: {
+        backgroundColor: theme.colors.primary + '18',
+        borderColor: theme.colors.primary,
+    },
+    tabText: {
+        ...theme.typography.bodySmall,
+        color: theme.colors.textSecondary,
+        fontWeight: '600',
+        maxWidth: 100,
+    },
+    tabTextActive: {
+        color: theme.colors.primary,
+    },
+    menuBtn: {
+        padding: 4,
+        marginLeft: -2,
+    },
+    addGroupBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: theme.colors.primary + '40',
+        backgroundColor: theme.colors.primary + '08',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    limitHint: {
+        ...theme.typography.caption,
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+        paddingVertical: 2,
+    },
+    // ── 群組管理選單（Modal 方式） ──
+    menuOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    menuPopup: {
+        width: '70%',
+        maxWidth: 280,
+        backgroundColor: theme.colors.surface,
+        borderRadius: theme.borderRadius.lg,
+        ...theme.shadows.lg,
+        overflow: 'hidden' as const,
+    },
+    menuPopupTitle: {
+        ...theme.typography.bodySmall,
+        fontWeight: '700',
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+        paddingVertical: theme.spacing.sm + 2,
+        paddingHorizontal: theme.spacing.md,
+    },
+    dropdownItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.spacing.sm,
+        paddingVertical: theme.spacing.sm + 2,
+        paddingHorizontal: theme.spacing.md,
+    },
+    dropdownText: {
+        ...theme.typography.bodySmall,
         color: theme.colors.text,
     },
-    separator: {
+    dropdownDivider: {
         height: 1,
         backgroundColor: theme.colors.border,
     },
-    // ── 按鈕 ──
-    actions: {
+    // ── Modals ──
+    modalOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+    modalContent: {
+        width: '85%',
+        maxWidth: 360,
+        backgroundColor: theme.colors.surface,
+        borderRadius: theme.borderRadius.lg,
+        padding: theme.spacing.xl,
+        ...theme.shadows.lg,
+    },
+    modalTitle: {
+        ...theme.typography.h3,
+        color: theme.colors.text,
+        marginBottom: theme.spacing.lg,
+        textAlign: 'center',
+    },
+    modalInput: {
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        borderRadius: theme.borderRadius.md,
+        padding: theme.spacing.md,
+        ...theme.typography.body,
+        color: theme.colors.text,
+        backgroundColor: theme.colors.surface,
+        marginBottom: theme.spacing.lg,
+    },
+    modalActions: {
         flexDirection: 'row',
         gap: theme.spacing.md,
-        marginTop: theme.spacing.sm,
     },
-    btn: {
+    modalBtn: {
         flex: 1,
         paddingVertical: theme.spacing.md,
         borderRadius: theme.borderRadius.md,
         alignItems: 'center',
     },
-    cancelBtn: {
+    modalCancelBtn: {
         backgroundColor: theme.colors.background,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
     },
-    cancelText: {
+    modalCancelText: {
         color: theme.colors.textSecondary,
         fontWeight: '600',
     },
-    confirmBtn: {
+    modalConfirmBtn: {
         backgroundColor: theme.colors.primary,
     },
-    confirmText: {
+    modalConfirmText: {
         color: theme.colors.onPrimary,
         fontWeight: '600',
     },

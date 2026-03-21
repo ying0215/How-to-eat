@@ -587,14 +587,24 @@ export function useGoogleAuth() {
     //   修正方式：在 Web 上使用 window.location.origin + baseUrl 作為 redirect URI。
     const redirectUri = Platform.OS === 'web'
         ? (() => {
-            // 使用當前頁面的 origin + pathname 作為 redirect URI
-            // 例如：https://ying0215.github.io/How-to-eat/
+            // 使用當前頁面的 origin 作為 redirect URI 的基底
             const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
             const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
-            // 取得 base path（例如 /How-to-eat/），去掉多餘的子路徑
-            // pathname 可能是 /How-to-eat/ 或 /How-to-eat/settings 等
-            const basePath = pathname.split('/').slice(0, 2).join('/'); // → /How-to-eat
-            const uri = origin + (basePath === '/' ? '' : basePath) + '/';
+
+            // Localhost 環境：不需要子路徑，直接使用 origin + /
+            // 部署環境（GitHub Pages / Vercel 等）：需要保留第一層路徑（如 /How-to-eat/）
+            const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+            let basePath: string;
+            if (isLocalhost) {
+                basePath = ''; // localhost → http://localhost:8081/
+            } else {
+                // 取得部署子路徑（例如 /How-to-eat），忽略 Expo router 的頁面路徑
+                basePath = pathname.split('/').slice(0, 2).join('/'); // → /How-to-eat
+                if (basePath === '/') basePath = '';
+            }
+
+            const uri = origin + basePath + '/';
             console.info('[useGoogleAuth] Web redirectUri:', uri);
             return uri;
         })()
@@ -771,11 +781,12 @@ export function useGoogleAuth() {
     }, [store]);
 
     // ── getValidToken：取得有效的 access token（自動刷新） ──
-    const getValidToken = useCallback(async (): Promise<string | null> => {
+    const getValidToken = useCallback(async (forceRefresh = false): Promise<string | null> => {
         const state = useGoogleAuthStore.getState();
 
-        // 如果 token 還有至少 5 分鐘有效期，直接回傳
+        // 如果 token 還有至少 5 分鐘有效期且非強制刷新，直接回傳
         if (
+            !forceRefresh &&
             state.accessToken &&
             state.tokenExpiresAt &&
             state.tokenExpiresAt > Date.now() + 5 * 60 * 1000
@@ -793,9 +804,13 @@ export function useGoogleAuth() {
         }
 
         const remainingMs = state.tokenExpiresAt ? state.tokenExpiresAt - Date.now() : -Infinity;
-        console.info(
-            `[getValidToken] 🔄 Token ${remainingMs <= 0 ? '已過期' : `即將過期（剩餘 ${Math.round(remainingMs / 1000)}s）`}，正在用 refresh token 刷新...`,
-        );
+        if (forceRefresh) {
+            console.info('[getValidToken] 🔄 強制使用 refresh token 刷新...');
+        } else {
+            console.info(
+                `[getValidToken] 🔄 Token ${remainingMs <= 0 ? '已過期' : `即滿期（剩餘 ${Math.round(remainingMs / 1000)}s）`}，正在用 refresh token 刷新...`,
+            );
+        }
 
         try {
             const { accessToken, expiresIn } = await refreshAccessToken(rt);
@@ -833,3 +848,40 @@ export function useGoogleAuth() {
         getValidToken,
     };
 }
+
+// ---------------------------------------------------------------------------
+// 🛡️ Global Auth Interceptor 綁定
+// ---------------------------------------------------------------------------
+import { setAuthRefreshHandler } from './authInterceptor';
+
+/**
+ * 非 Hook 版本，供全域攔截器呼叫強制刷新 Token。
+ * 網路層 (fetchWithResilience) 收到 401 時會觸發。
+ */
+export async function forceRefreshTokenStandalone(): Promise<string | null> {
+    const rt = _moduleRefreshToken;
+    if (!rt) {
+        console.warn('[AuthInterceptor] ⚠️ 無 refresh token，無法執行全域刷新');
+        return null;
+    }
+    
+    console.info('[AuthInterceptor] 🔄 攔截到 401/403，啟動全域 Silent Token Refresh...');
+    try {
+        const { accessToken, expiresIn } = await refreshAccessToken(rt);
+        const tokenExpiresAt = Date.now() + expiresIn * 1000;
+        useGoogleAuthStore.getState()._updateToken(accessToken, tokenExpiresAt);
+        console.info(`[AuthInterceptor] ✅ 全域 Token 刷新成功，新 token 有效期 ${expiresIn} 秒`);
+        return accessToken;
+    } catch (refreshErr) {
+        console.error('[AuthInterceptor] ❌ 全域 Refresh token 失效，強制登出:', refreshErr);
+        await secureDelete(SECURE_KEY_REFRESH_TOKEN);
+        await secureDelete(SECURE_KEY_USER_EMAIL);
+        await secureDelete(SECURE_KEY_USER_NAME);
+        _moduleRefreshToken = null;
+        useGoogleAuthStore.getState()._setSignedOut();
+        return null;
+    }
+}
+
+// 在模組初始時註冊
+setAuthRefreshHandler(forceRefreshTokenStandalone);

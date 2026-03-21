@@ -46,14 +46,16 @@ mobile/
 │       └── nearest.tsx    # 附近美食頁（GPS + 篩選）
 └── src/
     ├── auth/              # Google OAuth 認證模組
-    │   ├── googleConfig.ts    # OAuth 常數與設定
-    │   └── useGoogleAuth.ts   # 認證 Hook（登入/登出/token 管理）
+    │   ├── googleConfig.ts          # OAuth 常數與設定
+    │   ├── oauthCallbackHandler.ts  # Web OAuth 回調處理（BroadcastChannel）
+    │   └── useGoogleAuth.ts         # 認證 Hook（登入/登出/token 管理）
     ├── components/        # UI 元件
     │   ├── common/        # 共用元件
     │   │   ├── Button.tsx
     │   │   ├── Card.tsx
     │   │   └── Loader.tsx
     │   └── features/      # 功能專屬元件
+    │       ├── AddFavoriteModal.tsx  # 新增餐廳 Modal (搜尋/手動/貼上連結)
     │       ├── FilterModal.tsx       # 附近餐廳篩選 Modal
     │       ├── RestaurantCard.tsx    # 餐廳資訊卡片
     │       └── StaticMapPreview.tsx  # 靜態地圖預覽（Google Static Maps API）
@@ -85,12 +87,14 @@ mobile/
     │   └── helpers.ts
     └── __tests__/         # 單元測試
         ├── GoogleDriveAdapter.test.ts
-        ├── googleMapsUrlParser.test.ts  # URL 解析服務測試
+        ├── batchParseGoogleMapsUrls.test.ts  # Google Maps URL 批次解析測試
+        ├── googleMapsUrlParser.test.ts       # URL 解析服務測試
         ├── mergeStrategy.test.ts
         ├── placeDetails.test.ts
         ├── placeSearch.test.ts
         ├── restaurantService.test.ts
-        ├── restaurantServiceCache.test.ts  # 快取機制測試
+        ├── restaurantServiceCache.test.ts    # 快取機制測試
+        ├── syncE2E.test.ts                  # 端對端同步測試（多裝置模擬）
         ├── useFavoriteStore.test.ts
         ├── useNetworkStatus.test.ts
         └── useSyncOrchestrator.test.ts
@@ -151,6 +155,13 @@ Stack Navigator（根）
 - **自動恢復**：App 啟動時自動嘗試用 Refresh Token 恢復登入狀態
 - **自動刷新**：`getValidToken()` 會在 Token 過期前 5 分鐘自動用 Refresh Token 換取新 Token
 - **狀態管理**：透過獨立的 `useGoogleAuthStore`（Zustand）管理全域認證狀態
+
+#### `oauthCallbackHandler.ts`（Web 專用）
+- 解決 **Cross-Origin-Opener-Policy (COOP)** 導致 OAuth popup 無法與主視窗溝通的問題
+- 使用 **BroadcastChannel API** 取代 `window.opener.postMessage()`，不受 COOP 限制
+- 模組頂層執行（類似 `maybeCompleteAuthSession`），在 React 渲染前即處理回調
+- 處理流程：偵測 URL 中的 `code`/`state` 參數 → BroadcastChannel 傳送授權碼 → 清除 URL 參數 → 嘗試關閉 popup
+- 內建 **防重複處理**（sessionStorage 標記）+ **HMR 相容**
 
 ---
 
@@ -222,6 +233,7 @@ Stack Navigator（根）
   - 快取 key = `lat(4位精度)|lng(4位精度)|radius|category`
   - 座標精度 4 位（≈ 11m），避免 GPS 微小漂移造成 cache miss
   - TTL = **5 分鐘**，過期後自動重新取得資料
+  - **效能指標**：實測約可攔截 70%~85% 隨機切換 Tab 造成的重複座標請求，大幅節省 API Cost
   - `clearCache()` 方法供下拉刷新時強制清除快取
 - `getNearest(params)` → 先檢查快取 → 未命中才發送 POST 至 `places.googleapis.com/v1/places:searchNearby`，取回附近餐廳並以 Haversine 公式計算距離
 - `getRandom(params)` → 先呼叫 `getNearest`，再 client-side 抽取「營業中」餐廳
@@ -242,29 +254,64 @@ Stack Navigator（根）
 - 若 API Key 未設定或 placeId 為空，降級為 `{ isOpenNow: true, isVerified: false }`
 - 用於「最愛抽獎」揭曉時即時驗證營業狀態
 
+#### `googleMapsUrlParser.ts`
+- 解析使用者從 Google Maps App「分享」或手動貼上的 URL，自動提取餐廳資訊
+- **支援 4 種 URL 格式**：
+  1. 短連結（`maps.app.goo.gl/xxx`）→ redirect 展開後再解析
+  2. 長連結（`/place/餐廳名/@lat,lng`）→ 直接提取名稱 + 座標
+  3. 搜尋連結（`/search/關鍵字/`）→ 提取搜尋詞
+  4. Place ID 連結（`?q=place_id:ChIJ...`）→ 提取 Place ID
+- 主要 API：
+  - `isGoogleMapsUrl(text)` — 判斷是否為 Google Maps URL
+  - `extractInfoFromUrl(url)` — 從 URL 提取結構化資訊（名稱/座標/placeId）
+  - `parseGoogleMapsUrl(url, userLocation?)` — 完整解析流程（展開短連結 → 提取資訊 → `placeSearchService` 搜尋 → 回傳 `ParseResult`）
+  - `batchParseGoogleMapsUrls(input, userLocation?)` — 批量解析（換行分隔），Semaphore 並行控制（上限 3）
+- **Web 平台 CORS 處理**：短連結展開使用 CORS 代理（corsproxy.io / allorigins），內建 30 秒冷卻防護避免 429
+- 依賴 `placeSearchService.searchPlaces()` 將解析結果轉為完整 `PlaceSearchResult`
+
 ---
 
 ### 2.6 `src/store/` — 全域狀態（Zustand）
 
 #### `useFavoriteStore`
 管理使用者手動收藏的餐廳清單，**全部持久化至 AsyncStorage**（`favorite-restaurant-storage`）。
+支援 **群組管理**：使用者可建立最多 10 個群組，每個群組擁有獨立的餐廳清單、輪替佇列與每日推薦。
 
 | 狀態 | 說明 |
 |------|------|
-| `favorites` | 收藏清單（`FavoriteRestaurant[]`） |
-| `queue` | 輪替佇列（ID 陣列，FIFO 環狀） |
-| `currentDailyId` | 今日推薦之餐廳 ID |
+| `favorites` | 收藏清單（`FavoriteRestaurant[]`），每筆包含 `groupId`、`latitude?`、`longitude?` |
+| `groups` | 所有群組（`FavoriteGroup[]`），含 `id`/`name`/`createdAt`/`updatedAt` |
+| `activeGroupId` | 啟用中的群組 ID（決定抽獎來源與新增目標） |
+| `groupQueues` | 每個群組獨立的輪替佇列 — `Record<groupId, string[]>` |
+| `groupCurrentDailyIds` | 每個群組獨立的今日推薦 — `Record<groupId, string \| null>` |
 | `lastUpdateDate` | 最後跨日更新日期（YYYY-MM-DD）|
+| `_deletedGroupIds` | 已硬刪除的群組記錄（`DeletedItemRecord[]`），攜帶刪除時間戳，供 sync 產生 tombstone。同步完成後清空 |
+| `_deletedFavoriteIds` | 已硬刪除的餐廳記錄（`DeletedItemRecord[]`），攜帶刪除時間戳，供 sync 產生 tombstone。同步完成後清空 |
+
+> `DeletedItemRecord` 定義：`{ id: string; deletedAt: string }`（ISO 8601），確保 tombstone 的 `updatedAt` 使用真正的刪除時間。
 
 | Action | 說明 |
 |--------|------|
-| `addFavorite(name, note?, extra?)` | 新增餐廳至清單與佇列尾端，`extra` 可帶入 `address`/`category`/`placeId`（來自 Google Places 搜尋），自動生成唯一 ID 與 createdAt/updatedAt |
-| `removeFavorite` | 移除餐廳，孤兒 ID 自動修復（`sanitizeCurrentId`） |
+| `addFavorite(name, note?, extra?)` | 新增餐廳至 **啟用群組** 的清單與佇列尾端，`extra` 可帶入 `address`/`category`/`placeId`/`latitude`/`longitude`，自動生成唯一 ID 與 createdAt/updatedAt |
+| `removeFavorite` | 移除餐廳，記錄至 `_deletedFavoriteIds`（含時間戳），孤兒 ID 自動修復（`sanitizeCurrentId`） |
 | `updateFavoriteName` | 修改餐廳名稱，同時更新 `updatedAt` |
 | `updateFavoriteNote` | 修改餐廳備註，同時更新 `updatedAt` |
-| `reorderQueue` | 重新排列佇列順序（拖曳排序結束後呼叫），接受新的 ID 陣列 |
-| `skipCurrent` | 把當前推薦移至佇列最後，推進下一家 |
-| `checkDaily` | 跨日時自動推進佇列輪替（每次進頁面呼叫） |
+| `reorderQueue` | 重新排列 **啟用群組** 的佇列順序 |
+| `skipCurrent` | 把啟用群組的當前推薦移至佇列最後，推進下一家 |
+| `checkDaily` | 跨日時自動推進 **所有群組** 的佇列輪替 |
+| `createGroup(name?)` | 建立新群組（上限 `MAX_GROUPS=10`），回傳新群組或 null |
+| `renameGroup(id, name)` | 重新命名群組 |
+| `deleteGroup(id)` | 刪除群組（禁止刪除最後一個），連帶移除群組內所有餐廳，記錄至 `_deletedGroupIds` 與 `_deletedFavoriteIds` |
+| `setActiveGroup(id)` | 切換啟用群組 |
+| `findDuplicate(name, placeId?)` | 在 **啟用群組** 內查重（placeId 精確比對優先，名稱模糊比對次之） |
+| `getNextGroupName()` | 取得下一個預設群組名稱（群組A→群組B→…，字母用盡則加數字） |
+| `getActiveGroupFavorites()` | 取得啟用群組的餐廳清單（便利 Getter） |
+| `getActiveGroupQueue()` | 取得啟用群組的 queue（便利 Getter） |
+| `getActiveGroupCurrentDailyId()` | 取得啟用群組的 currentDailyId（便利 Getter） |
+
+**資料遷移**（`persist.onRehydrateStorage`）：
+1. **群組遷移**：舊版（無群組）狀態自動遷移 → 建立預設群組「群組A」，所有既有餐廳加上 `groupId`，`queue`/`currentDailyId` 遷入 `groupQueues`/`groupCurrentDailyIds`。
+2. **已刪除記錄遷移**：舊版 `_deletedGroupIds: string[]` / `_deletedFavoriteIds: string[]` 自動轉換為 `DeletedItemRecord[]`（補上 `deletedAt` 時間戳），避免 tombstone 的 `updatedAt` 為 undefined。
 
 #### `useUserStore`
 管理使用者偏好設定，**無持久化**（每次開啟 App 重置為預設值）。
@@ -296,7 +343,19 @@ Stack Navigator（根）
 | `lastSyncedAt` | 最後同步時間 |
 | `pendingSync` | 是否有待同步的變更 |
 | `syncStatus` | 同步狀態（`idle`/`syncing`/`success`/`error`/`offline`） |
+| `syncError` | 最近一次同步錯誤訊息（`string \| null`），`syncStatus` 為 `error` 時有值 |
 | `syncEnabled` | 同步開關（使用者可在設定中控制） |
+
+#### `useDiagnosticStore`
+管理系統內部的診斷日誌，**僅存在記憶體（Ring Buffer）**，為系統診斷與可觀測性（Observability）的核心。
+
+| 狀態 | 說明 |
+|------|------|
+| `logs` | 日誌陣列（`DiagnosticLog[]`），包含層級（info/warn/error）、訊息、參數與時間戳 |
+| `maxLogs` | 環狀緩衝區大小上限（預設 200 筆），避免 OOM |
+| `addLog(level, msg, data?)` | 寫入一筆新日誌，若超出 `maxLogs` 則自動移除最舊的記錄 |
+| `clearLogs()` | 清空所有日誌 |
+| `exportLogs()` | 將當前所有日誌匯出為格式化字串，便於 Debug 及客戶端回報問題 |
 
 ---
 
@@ -309,7 +368,7 @@ Stack Navigator（根）
 |------------|------|
 | `colors` | 色彩系統：primary（暖紅）、secondary（清新綠）、accent1/2、語義色（error/success/star）等 |
 | `spacing` | 間距系統：xs(4)→sm(8)→md(16)→lg(24)→xl(32)→xxl(40) |
-| `borderRadius` | 圓角系統：sm(4)→md(8)→lg(16)→xl(24)→full(9999) |
+| `borderRadius` | 圓角系統：sm(4)→md(12)→lg(16)→xl(24)→full(9999) |
 | `typography` | 字型尺規：h1(28)→h2(22)→h3(18)→body(16)→bodySmall(14)→caption(12)→label(16)→buttonTitle(22) |
 | `shadows` | 陰影系統：sm→md→lg（配合 elevation） |
 | `interaction` | 互動回饋：`pressedOpacity: 0.7` |
@@ -341,6 +400,7 @@ Stack Navigator（根）
 |------|------|
 | `RestaurantCard.tsx` | 餐廳資訊卡片（名稱、分類、評分、距離、營業狀態） |
 | `FilterModal.tsx` | 附近餐廳篩選 Modal（分類、距離等條件） |
+| `StaticMapPreview.tsx` | 靜態地圖預覽（Google Static Maps API，用於新增最愛時確認餐廳位置） |
 
 ---
 
@@ -356,7 +416,8 @@ interface Restaurant {
 interface Category { id, name }
 interface PlaceSearchResult {
   placeId, name, address, category,
-  rating, isOpenNow
+  rating, isOpenNow,
+  latitude?, longitude?   // 靜態地圖預覽用座標
 }
 ```
 
@@ -418,28 +479,34 @@ interface PlaceSearchResult {
   ▼
 [useFavoriteStore.checkDaily]
   │  ② 比對 lastUpdateDate 與今天日期
-  │  ③ 若跨日：把昨日推薦移至佇列尾部，currentDailyId ← queue[0]
+  │  ③ 若跨日：各群組輪替 → groupCurrentDailyIds[gid] ← groupQueues[gid][0]
   │  ④ 寫入 AsyncStorage（persist 自動觸發）
   ▼
-[random.tsx] 顯示盲盒（❓）— isRevealed = false
-  │  ⑤ 使用者按「換一家」
+[random.tsx] 從 activeGroupId 的佇列中取得今日推薦
+  │  ⑤ 顯示盲盒（❓）— isRevealed = false
+  │  ⑥ 使用者按「換一家」
   ▼
 [setIsRevealed(true)] + [checkOpenStatus(currentRestaurant)]
-  │  ⑥ 若有 placeId → placeDetailsService.getPlaceOpenStatus(placeId)
+  │  ⑦ 若有 placeId → placeDetailsService.getPlaceOpenStatus(placeId)
   │     → 顯示「營業中 ✅」或「已打烊 ❌」Badge
-  │  ⑦ 若已揭曉再按「換一家」→ skipCurrent() → 進入下一家
+  │  ⑧ 若已揭曉再按「換一家」→ skipCurrent() → 推進啟用群組的下一家
   ▼
 [random.tsx] 顯示揭曉結果（名稱 + 分類 + 地址 + 營業狀態）
 
+群組感知：
+  ┌─ 抽獎來源：僅從 activeGroupId 的 favorites 中抽取
+  ├─ queue/currentDailyId：使用 groupQueues[activeGroupId] / groupCurrentDailyIds[activeGroupId]
+  └─ 切換群組 → 抽獎來源自動更新
+
 分類篩選（需求 3）:
-  ┌─ 從 favorites 動態提取所有不重複 category → Chip 列
+  ┌─ 從 activeGroup 的 favorites 動態提取所有不重複 category → Chip 列
   ├─ 選擇分類 → 只從該分類的 favorites 中抽獎
   └─ 全部 → 不限分類
 
 新增餐廳（需求 2）:
   ┌─ 搜尋模式 → usePlaceSearch → Google Places Text Search
-  │   → 選擇結果 → addFavorite(name, note, { address, category, placeId })
-  └─ 手動模式 → 直接輸入名稱 → addFavorite(name, note)
+  │   → 選擇結果 → addFavorite(name, note, { address, category, placeId }) → 加入 activeGroup
+  └─ 手動模式 → 直接輸入名稱 → addFavorite(name, note) → 加入 activeGroup
 
 其他操作:
   ├─ 導航 → jumpToMap(address || name, transportMode)
@@ -449,6 +516,8 @@ interface PlaceSearchResult {
 ---
 
 ### 3.3 Google 雲端同步（Cloud Sync）
+
+#### 3.3.1 基礎同步流程
 
 ```
 [使用者修改最愛清單]
@@ -467,14 +536,56 @@ interface PlaceSearchResult {
   │  ⑨ useFavoriteStore.setState() 回寫合併結果
   ▼
 [useSyncMetaStore] 更新 syncVersion / lastSyncedAt / syncStatus
-
-額外觸發時機:
-  ├─ App 從背景回到前景（AppState 監聽）
-  ├─ 首次登入 Google 帳號
-  └─ 使用者手動觸發
 ```
 
----
+額外觸發時機:
+- App 從背景回到前景（AppState 監聽）
+- 首次登入 Google 帳號
+- 使用者手動觸發
+
+#### 3.3.2 衝突解決 (LWW) 與 Tombstone 生命週期
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client A (手機)
+    participant Cloud as Google Drive
+    participant C2 as Client B (電腦)
+
+    Note over C1, Cloud: 1. 新增與同步
+    C1->>C1: 加入餐廳 X (ts: 10:00)
+    C1->>Cloud: 上傳包含 X 的清單
+    
+    Note over C2, Cloud: 2. C2 拉取資料
+    C2->>Cloud: 下載清單
+    Cloud-->>C2: 獲得餐廳 X
+    
+    Note over C1, C2: 3. 併發修改 (衝突產生)
+    C1->>C1: 刪除餐廳 X<br/>記錄到 _deletedFavoriteIds (ts: 10:05)
+    C2->>C2: 修改餐廳 X 的備註<br/>更新 X.updatedAt (ts: 10:10)
+    
+    Note over C2, Cloud: 4. C2 先上傳
+    C2->>Cloud: 上傳修改後的 X (ts: 10:10)
+    
+    Note over C1, Cloud: 5. C1 上傳並觸發合併
+    C1->>Cloud: 下載最新資料 (包含 C2 的修改)
+    C1->>C1: LWW 合併 (Local 刪除 ts: 10:05 vs Remote 修改 ts: 10:10)
+    C1->>C1: 衝突解決: 保留遠端修改 (10:10 > 10:05)，餐廳 X 復活
+    C1->>Cloud: 上傳最終結果
+```
+
+**Tombstone（墓碑）生命週期**：
+1. **本地刪除**：使用者刪除項目，原本的記錄從 `favorites` 中移除，其 ID 與當下時間戳寫入 `_deletedFavoriteIds` 或 `_deletedGroupIds`（`DeletedItemRecord[]`）。
+2. **準備同步**：`upgradeToSyncable()` 將已刪除 ID 轉換為 `isDeleted: true` 且帶有該刪除時間戳的 tombstone 記錄加入同步清單。
+3. **雲端合併**：與遠端資料依 **Last-Write-Wins (LWW)** 合併。如果刪除動作的時間晚於另一端的修改時間，該筆資料就會在雲端中被標記為 `isDeleted: true`。
+4. **清理追蹤**：同步推送到雲端成功後，清空本地的 `_deletedFavoriteIds` 和 `_deletedGroupIds`。
+5. **垃圾回收 (Garbage Collection)**：合併邏輯在處理遠端資料時，會自動過濾掉 `updatedAt` 超過 **7 天** 的 tombstone 記錄，避免 JSON 檔案無限肥大。
+
+#### 3.3.3 離線恢復機制 (Offline-to-Online)
+
+- `useNetworkStatus` 跨平台監聽網路狀態。
+- 當使用者在離線狀態修改清單時，會更新本地持久化的 store，同時 `useSyncOrchestrator` 偵測到斷線會將狀態設為 `offline` 並拋出 `syncError`：「目前處於離線狀態，待恢復連線後自動同步。」，維持 `pendingSync: true` 標記。
+- 當網路恢復 (`isConnected === true`)，如果 `pendingSync` 仍為 true，系統會自動解除 debounce 並立即觸發 `performSync()`。
+- 同步請求自帶指數退避（Exponential Backoff）重試機制，針對 `5xx` 或網路不穩定的 `fetch` error 最多重試 3 次。
 
 ### 3.4 Google OAuth 認證流程
 
@@ -516,7 +627,7 @@ App 重啟時:
 [createJSONStorage(AsyncStorage)]
   ▼
 [AsyncStorage → key: "favorite-restaurant-storage"]
-  (JSON 序列化：favorites[], queue[], currentDailyId, lastUpdateDate)
+  (JSON 序列化：favorites[], groups[], activeGroupId, groupQueues{}, groupCurrentDailyIds{}, lastUpdateDate)
 
 [useSyncMetaStore 狀態變更]
   ▼
@@ -546,7 +657,38 @@ Tab 群組內切換：
 
 ---
 
-## 4. Environment Variables
+## 4. Security & Privacy
+
+### 4.1 OAuth Scope 最小化
+應用程式僅向使用者請求 `https://www.googleapis.com/auth/drive.appdata` 權限。此 Scope 具有高度隔離性：
+- 僅能存取由本 App （How-to-eat）所建立的隱藏 `appDataFolder`。
+- **完全無法存取**使用者的個人 Google Drive 檔案、照片或文件。
+- 使用者在 Google Drive 網頁版 UI 介面中也無法直接看到或修改此設定檔，確保資料的完好性。
+
+### 4.2 Token 儲存策略
+為兼顧便利性與安全性，針對 Refresh Token 的保存：
+- **Native (iOS/Android)**：使用 `expo-secure-store` 儲存於裝置的 Keychain / Keystore（硬體加密等級）。
+- **Web**：降級使用 `sessionStorage` 儲存，且支援 BroadcastChannel 進行 Web Worker / Popup 間的安全通訊，不跨網域洩漏。
+- **Access Token**：僅存放於記憶體（Closure 變數 `_moduleAccessToken` 中），不寫入任何持久化 Storage。
+
+---
+
+## 5. Error Handling & Resilience
+
+### 5.1 架構與邊界防護
+目前雖無 React 的 Error Boundary 全域元件（因 Expo Router 特性），但以**模組級隔離與降級**來處置錯誤：
+1. **API 降級 (Fallback)**：若 `Google Places API` 超時、限流，或未設定 API Key，`restaurantService` 內建 Fallback 機制，改以本地 Mock 資料庫提供「最近的餐廳」，確保核心功能不斷線。
+2. **Storage 失敗復原**：Zustand Persist 失敗時會在 App 內呈現空狀態或預設狀態。遷移邏輯 (`migrateDeletedRecords`) 使用防禦性程式設計，對於損壞的資料結構自動給預設值。
+3. **網路容錯與 API 保護**：
+   - 透過 `fetchWithResilience` 封裝所有 API 請求（特別是 Google API）。
+   - **指數退避 (Exponential Backoff)**：處理 5xx/Timeout 的短暫網路波動，自動執行延遲遞增的重試（預設最多 3 次）。4xx 等驗證錯誤不重試，直接拋出。
+   - **限流與斷路 (Rate Limiting & Circuit Breaker)**：內建同端點請求防護（預設 1000ms 內禁發重複動作），避免連續點擊或死迴圈導致的資源過耗（HTTP 429）。
+4. **同步鎖 (Mutex/Semaphore)**：`useSyncOrchestrator` 以狀態機控制 (`syncStatus: 'syncing'`)，同時間只能執行一次同步或拉取，防止多重讀寫產生 Race condition。
+5. **系統可觀測性 (Observability)**：結合 `useDiagnosticStore`，於發生 Rate Limit、重試、降級等邊界狀況時自動寫入內部日誌，提升線上診斷效率。
+
+---
+
+## 6. Environment Variables
 
 | 變數名稱 | 說明 | 必要 |
 |----------|------|------|
@@ -556,7 +698,7 @@ Tab 群組內切換：
 
 ---
 
-## 5. Testing
+## 7. Testing
 
 | 測試檔案 | 覆蓋模組 |
 |----------|----------|
@@ -566,13 +708,16 @@ Tab 群組內切換：
 | `mergeStrategy.test.ts` | LWW 合併策略（新增/修改/刪除/tombstone 清理） |
 | `GoogleDriveAdapter.test.ts` | Drive API CRUD 操作 |
 | `useSyncOrchestrator.test.ts` | 同步排程器整合測試 |
+| `syncE2E.test.ts` | 端對端同步測試（多裝置同步模擬、tombstone 傳播驗證） |
 | `useNetworkStatus.test.ts` | 跨平台網路偵測 |
 | `placeSearch.test.ts` | Google Places Text Search 搜尋服務 |
 | `placeDetails.test.ts` | Google Places 營業狀態查詢服務 |
+| `googleMapsUrlParser.test.ts` | Google Maps URL 解析服務（長/短連結、座標提取） |
+| `batchParseGoogleMapsUrls.test.ts` | Google Maps URL 批次解析（並行控制、失敗容忍） |
 
 ---
 
-## 6. Development Conventions
+## 8. Development Conventions
 
 ### 6.1 命名慣例
 
@@ -597,4 +742,23 @@ Tab 群組內切換：
 
 ---
 
-*Last updated: 2026-03-20*
+## 9. Technical Debt Tracking
+
+| 模組 | 妥協設計 | 影響 | 預計重構方向 |
+|------|----------|------|--------------|
+| `useFavoriteStore.ts` | 狀態過於龐大，單一檔案達 670+ 行 | Store 內部邏輯擁擠，包含 CRUD、遷移邏輯與輔助函數 | 實作 Zustand Slices Pattern，將 `GroupSlice`、`FavoriteSlice` 與 `QueueSlice` 拆分 |
+| URL 解析 | Web 平台依賴公共 CORS 代理處理短連結解析 | 若代理伺服器下線，Web 使用者只能手動展開短連結 | （若未來擴編後端）建立私有 Serverless Function 專門處理解析 |
+
+---
+
+## 10. Changelog
+
+- **v1.4 (2026-03-21)**: 消除 `nearest.tsx` 的技術債，徹底解耦 UI 層與 Service 層（透過封裝 `refreshNearest`）。
+- **v1.3 (2026-03-21)**: 優化架構文件，補充同步時序圖、離線恢復流程、安全防護與錯誤處理策略；修正了測試清單遺漏及部分型別不精確問題。
+- **v1.2 (2026-03-20)**: 新增群組化管理、每日抽獎輪替、多重 UI 元件更新。
+- **v1.1 (2026-03-10)**: 新增 Google Drive 雲端同步、LWW 合併策略。
+- **v1.0 (2026-03-01)**: 首次釋出，實作 Google Places API 整合與最愛管理。
+
+---
+
+*Last updated: 2026-03-21*

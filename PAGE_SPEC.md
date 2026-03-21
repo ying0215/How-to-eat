@@ -1,6 +1,6 @@
 # 前端頁面架構書：「今天吃什麼」
 
-> **文件版本**：v1.2 · 2026-03-20  
+> **文件版本**：v1.3 · 2026-03-21  
 > **技術基礎**：Expo SDK 54 / React Native / Expo Router (File-based)  
 > **參考文件**：[ARCHITECTURE.md](./ARCHITECTURE.md)
 
@@ -29,9 +29,9 @@
 | 編號 | 頁面名稱 | 路由路徑 | 類型 | 說明 |
 |:---:|---|---|:---:|---|
 | **P1** | 首頁 · 入口頁面 | `app/index.tsx` | Stack | App 啟動入口，提供「隨機抽取」與「找最近的」兩個入口按鈕，左上角 ☰ 導向功能清單 |
-| **P2** | 最愛抽獎（每日輪替） | `app/(tabs)/random.tsx` | Tab | 從最愛清單中每日輪替推薦餐廳，支援新增、跳過、刪除 |
+| **P2** | 最愛抽獎（每日輪替） | `app/(tabs)/random.tsx` | Tab | 從 **啟用群組** 的最愛清單中每日輪替推薦餐廳，支援新增、跳過、刪除 |
 | **P3** | 附近美食 | `app/(tabs)/nearest.tsx` | Tab | 依 GPS + Google Places API 列出附近餐廳清單，支援分類篩選 |
-| **P4** | 最愛餐廳紀錄 | `app/favorites.tsx` | Stack | 管理已加入最愛的餐廳清單，可排序、刪除 |
+| **P4** | 最愛餐廳紀錄 | `app/favorites.tsx` | Stack | 管理已加入最愛的餐廳清單，支援 **群組管理**（建立/重命名/刪除）、排序、刪除 |
 | **P5** | 偏好設定 | `app/settings.tsx` | Stack | 設定交通方式、最高交通時間、Google 帳號同步管理 |
 | **P6** | 功能清單 | `app/menu.tsx` | Stack | 從首頁 ☰ 進入，列出「最愛清單」與「偏好設定」入口 |
 
@@ -76,7 +76,7 @@ App 啟動 → 直接顯示首頁入口
 
 ### P2 最愛抽獎（每日輪替） `app/(tabs)/random.tsx`
 
-**頁面定位**：從使用者的最愛清單中，每日輪替推薦一間餐廳。支援 Google Places 搜尋新增、手動新增、分類篩選、跳過當前推薦、營業狀態查詢。資料完全來自本地 `useFavoriteStore`，營業狀態透過 Google Places API 即時查詢。
+**頁面定位**：從使用者的 **啟用群組** 最愛清單中，每日輪替推薦一間餐廳。支援 Google Places 搜尋新增、手動新增、分類篩選、跳過當前推薦、營業狀態查詢。資料來自 `useFavoriteStore` 中 `activeGroupId` 對應的群組，營業狀態透過 Google Places API 即時查詢。
 
 #### 主要 UI 區塊
 
@@ -146,28 +146,33 @@ App 啟動 → 直接顯示首頁入口
 
 ### P4 最愛餐廳紀錄 `app/favorites.tsx`
 
-**頁面定位**：集中展示並管理使用者加入最愛的所有餐廳，提供排序、刪除與查看輪替佇列的能力。支援三種新增模式：Google Places 搜尋、手動輸入、貼上 Google Maps 連結。以 Stack Push 方式從 P6 功能清單進入，不在 Tab Bar 內。
+**頁面定位**：集中展示並管理使用者加入最愛的所有餐廳，支援 **群組管理**（建立/重新命名/刪除，上限 10 個）、排序、刪除與查看輪替佇列的能力。支援三種新增模式：Google Places 搜尋、手動輸入、貼上 Google Maps 連結。以 Stack Push 方式從 P6 功能清單進入，不在 Tab Bar 內。
 
 #### 主要 UI 區塊
 
 | 區塊 | 描述 |
 |---|---|
-| 佇列順序指示器 | 顯示當前輪替順序（今日 → 明日 → 後日…） |
-| 最愛清單（可拖曳排序） | 含餐廳名稱、類別、加入時間，支援滑動刪除（Swipe-to-delete） |
+| 群組 Tab 列 | 水平捲動的 Tab Bar，顯示所有群組，點擊切換啟用群組，每個 Tab 旁有三點選單（…）用於重新命名/刪除，最右側有 ⊕ 新增群組按鈕 |
+| 群組管理 Modal | 三點選單彈出透明 Modal，包含「重新命名」與「刪除群組」選項 |
+| 建立/重新命名群組 Modal | 居中彈出視窗，含輸入框與確認/取消按鈕 |
+| 佇列順序指示器 | 顯示當前啟用群組的輪替順序（今日 → 明日 → 後日…） |
+| 最愛清單（可拖曳排序） | 含餐廳名稱、類別、加入時間，支援滑動刪除（Swipe-to-delete），**僅顯示啟用群組的餐廳** |
 | FAB 浮動按鈕 | 右下角 ➕ 浮動按鈕，開啟 AddModal |
-| AddModal | 三模式：「搜尋餐廳」（Google Places Text Search 搜尋 → 選取 → 靜態地圖預覽確認位置 → 確認新增，含地址/分類/placeId/經緯度）+「手動輸入」（僅名稱+備註）+「貼上連結」（Google Maps 分享 URL 解析 → 自動提取餐廳資訊 → 靜態地圖預覽 → 確認新增） |
-| 空狀態 | 引導至 P3 探索餐廳的 CTA + 手動新增 CTA |
+| AddModal | 三模式：「搜尋餐廳」+「手動輸入」+「貼上連結」，新增的餐廳自動加入啟用群組 |
+| 空狀態 | 顯示啟用群組的名稱 + 引導至 P3 探索餐廳的 CTA + 手動新增 CTA |
 
 #### 按鈕清單與跳轉邏輯
 
 | # | 按鈕名稱 | 樣式類型 | 動作 / 跳轉邏輯 |
 |:---:|---|:---:|---|
-| B4-1 | ✏️ **編輯排序** | `text` | 進入拖曳排序模式；完成後更新 `useFavoriteStore` 的 `queue[]` 順序 |
+| B4-1 | ✏️ **編輯排序** | `text` | 進入拖曳排序模式；完成後更新 `useFavoriteStore` 的 `groupQueues[activeGroupId]` 順序 |
 | B4-2 | 🗑️ **刪除**（Swipe or 編輯模式） | `danger` | 呼叫 `useFavoriteStore.removeFavorite(id)` → 從清單與佇列移除 |
 | B4-3 | 🗺️ **導航**（卡片內） | `icon` | 呼叫 `useMapJump()` → Deep Link 地圖導航 |
 | B4-4 | ➕ **探索餐廳**（空狀態 CTA） | `primary` | Tab Switch → **P3 最近的餐廳** |
-| B4-5 | ➕ **FAB 新增**（右下角浮動） | `primary` (FAB) | 開啟 `AddModal`（三模式：搜尋/手動/貼上連結） |
+| B4-5 | ➕ **FAB 新增**（右下角浮動） | `primary` (FAB) | 開啟 `AddModal`（三模式：搜尋/手動/貼上連結）→ 加入啟用群組 |
 | B4-6 | ➕ **手動新增**（空狀態次要 CTA） | `secondary` | 開啟 `AddModal`（手動輸入模式） |
+| B4-7 | ⊕ **新增群組**（Tab 列最右側） | `icon` | 彈出建立群組 Modal，預設名稱用字母序（群組A→群組B…），已達上限時顯示提示 |
+| B4-8 | … **群組選單**（Tab 三點） | `icon` | 彈出管理 Modal，含「重新命名」與「刪除群組」（最後一個群組不可刪除） |
 
 ---
 
@@ -351,7 +356,7 @@ type ButtonVariant =
 
 | Variant | 背景色 | 文字色 | 邊框 | 使用場景 |
 |:---:|---|---|---|---|
-| `primary` | `theme.colors.primary` (橘/主色) | `white` | 無 | 去這裡、確認、再抽一次 |
+| `primary` | `theme.colors.primary` (暖紅/主色) | `white` | 無 | 去這裡、確認、再抽一次 |
 | `secondary` | `transparent` | `theme.colors.primary` | 1px primary | 跳過、篩選、次要行動 |
 | `danger` | `theme.colors.error` (紅) | `white` | 無 | 刪除最愛 |
 | `text` | `transparent` | `theme.colors.textSecondary` | 無 | 最愛清單、Header 文字連結 |
@@ -427,7 +432,7 @@ screenOptions={{
 }}
 ```
 
-#### Stack Header（`app/settings/_layout.tsx`）
+#### Stack Header（`app/settings.tsx` 自訂 Header）
 
 **P5 偏好設定**以 Stack 方式呈現，Header 規範如下：
 
@@ -477,10 +482,10 @@ interface RestaurantCardProps {
 | 頁面 | 讀取 Store | 調用 Hook | Service |
 |---|---|---|---|
 | P1 首頁 | `useGoogleAuthStore`（isSignedIn, user） | — | — |
-| P2 最愛抽獎 | `useFavoriteStore`（currentDailyId, queue, favorites）| `useMapJump` | — |
+| P2 最愛抽獎 | `useFavoriteStore`（groupCurrentDailyIds, groupQueues, favorites, activeGroupId）| `useMapJump` | — |
 | P3 附近美食 | `useUserStore`（transportMode, maxTimeMins）| `useLocation`、`useRestaurant.fetchNearest`、`useMapJump`、`useFavoriteStore.add` | `restaurant.getNearest` |
-| P4 最愛紀錄 | `useFavoriteStore`（favorites, queue）| `useMapJump` | — |
-| P5 設定 | `useUserStore`、`useGoogleAuthStore`、`useSyncMetaStore` | `useGoogleAuth`、`performSync`、`pullFromCloud` | — |
+| P4 最愛紀錄 | `useFavoriteStore`（favorites, groups, activeGroupId, groupQueues）| `useMapJump` | — |
+| P5 設定 | `useUserStore`、`useGoogleAuthStore`、`useSyncMetaStore`（syncStatus, syncError, lastSyncedAt, syncEnabled, syncVersion, pendingSync）、`useFavoriteStore`（favorites） | `useGoogleAuth`、`useNetworkStatus` | `performSync`、`pullFromCloud`、`uploadFavorites` |
 | P6 功能清單 | `useGoogleAuthStore`（isSignedIn, user）、`useSyncMetaStore`（syncStatus） | `useGoogleAuth`（signOut） | — |
 
 ---

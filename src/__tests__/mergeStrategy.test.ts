@@ -5,7 +5,7 @@
  *   - 單邊新增
  *   - 雙邊衝突（取 updatedAt 較新者）
  *   - Tombstone（軟刪除）傳播
- *   - Queue 合併
+ *   - Per-group Queue 合併
  *   - 格式升降級
  */
 
@@ -21,6 +21,12 @@ import {
 import type { FavoriteRestaurant } from '../store/useFavoriteStore';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DEFAULT_GROUP_ID = 'default-group';
+
+// ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
 
@@ -29,29 +35,58 @@ function makeFavorite(
     name: string,
     updatedAt: string,
     isDeleted = false,
+    groupId = DEFAULT_GROUP_ID,
 ): SyncableFavorite {
     return {
         id,
         name,
+        groupId,
         createdAt: '2025-01-01T00:00:00.000Z',
         updatedAt,
         isDeleted,
     };
 }
 
+/**
+ * 建立測試用的 SyncableFavoriteState。
+ *
+ * 支援 `queue` 和 `currentDailyId` 簡寫：若提供的話，
+ * 會自動填入 `groupQueues[DEFAULT_GROUP_ID]` 和
+ * `groupCurrentDailyIds[DEFAULT_GROUP_ID]`。
+ */
 function makeState(
-    overrides: Partial<SyncableFavoriteState> = {},
+    overrides: Partial<SyncableFavoriteState> & {
+        /** 簡寫：自動填入 groupQueues[DEFAULT_GROUP_ID] */
+        queue?: string[];
+        /** 簡寫：自動填入 groupCurrentDailyIds[DEFAULT_GROUP_ID] */
+        currentDailyId?: string | null;
+    } = {},
 ): SyncableFavoriteState {
+    const { queue, currentDailyId, ...rest } = overrides;
+    const groupQueues = rest.groupQueues ?? (queue !== undefined ? { [DEFAULT_GROUP_ID]: queue } : {});
+    const groupCurrentDailyIds = rest.groupCurrentDailyIds ?? (currentDailyId !== undefined ? { [DEFAULT_GROUP_ID]: currentDailyId } : {});
     return {
         favorites: [],
-        queue: [],
-        currentDailyId: null,
+        groups: [{ id: DEFAULT_GROUP_ID, name: '群組A', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z' }],
+        activeGroupId: DEFAULT_GROUP_ID,
+        groupQueues,
+        groupCurrentDailyIds,
         lastUpdateDate: '2025-03-13',
         _syncVersion: 0,
         _lastSyncedAt: '2025-03-13T00:00:00.000Z',
         _deviceId: 'test-device',
-        ...overrides,
+        ...rest,
     };
+}
+
+/** 從 merged 結果取得 default-group 的 queue */
+function getQueue(merged: SyncableFavoriteState): string[] {
+    return merged.groupQueues?.[DEFAULT_GROUP_ID] ?? [];
+}
+
+/** 從 merged 結果取得 default-group 的 currentDailyId */
+function getCurrentDailyId(merged: SyncableFavoriteState): string | null {
+    return merged.groupCurrentDailyIds?.[DEFAULT_GROUP_ID] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +110,7 @@ describe('mergeStates — 基礎合併', () => {
 
         expect(merged.favorites).toHaveLength(1);
         expect(merged.favorites[0].name).toBe('老王牛肉麵');
-        expect(merged.queue).toContain('a');
+        expect(getQueue(merged)).toContain('a');
     });
 
     it('場景 2: 遠端有、本地沒有 → 合併遠端新增', () => {
@@ -94,7 +129,7 @@ describe('mergeStates — 基礎合併', () => {
 
         expect(merged.favorites).toHaveLength(1);
         expect(merged.favorites[0].name).toBe('珍珠奶茶');
-        expect(merged.queue).toContain('b');
+        expect(getQueue(merged)).toContain('b');
     });
 
     it('場景 3: 雙邊都有同一筆 → 取 updatedAt 較新者', () => {
@@ -155,7 +190,7 @@ describe('mergeStates — Tombstone 軟刪除', () => {
         // 遠端 tombstone 較新，所以 isDeleted = true
         expect(item?.isDeleted).toBe(true);
         // 已刪除的項目不應出現在 queue 中
-        expect(merged.queue).not.toContain('d');
+        expect(getQueue(merged)).not.toContain('d');
     });
 
     it('場景 5: 本地刪除、遠端修改，遠端更新 → 修改獲勝', () => {
@@ -175,7 +210,7 @@ describe('mergeStates — Tombstone 軟刪除', () => {
         const item = merged.favorites.find((f) => f.id === 'e');
         expect(item?.isDeleted).toBe(false);
         expect(item?.name).toBe('遠端重新修改');
-        expect(merged.queue).toContain('e');
+        expect(getQueue(merged)).toContain('e');
     });
 });
 
@@ -203,7 +238,7 @@ describe('mergeStates — Queue 合併', () => {
         const merged = mergeStates(local, remote);
 
         // 遠端 version 較高，所以用遠端的 queue 順序
-        expect(merged.queue).toEqual(['y', 'z', 'x']);
+        expect(getQueue(merged)).toEqual(['y', 'z', 'x']);
     });
 
     it('合併後 queue 中不包含已刪除的項目', () => {
@@ -223,8 +258,8 @@ describe('mergeStates — Queue 合併', () => {
 
         const merged = mergeStates(local, remote);
 
-        expect(merged.queue).toContain('a');
-        expect(merged.queue).not.toContain('b');
+        expect(getQueue(merged)).toContain('a');
+        expect(getQueue(merged)).not.toContain('b');
     });
 });
 
@@ -255,7 +290,7 @@ describe('mergeStates — _syncVersion 與 _lastSyncedAt', () => {
 describe('upgradeToSyncable', () => {
     it('將 FavoriteRestaurant[] 轉換為 SyncableFavorite[]', () => {
         const input: FavoriteRestaurant[] = [
-            { id: '1', name: '測試餐廳', createdAt: '2025-03-13T00:00:00Z' },
+            { id: '1', name: '測試餐廳', groupId: 'g1', createdAt: '2025-03-13T00:00:00Z' },
         ];
 
         const result = upgradeToSyncable(input);
@@ -267,7 +302,7 @@ describe('upgradeToSyncable', () => {
 });
 
 describe('downgradeFromSyncable', () => {
-    it('過濾掉 tombstone 並移除 sync metadata', () => {
+    it('過濾掉 tombstone 並移除 isDeleted metadata', () => {
         const input: SyncableFavorite[] = [
             makeFavorite('1', '存活的', '2025-03-13T00:00:00Z', false),
             makeFavorite('2', '已刪除的', '2025-03-13T00:00:00Z', true),
@@ -277,8 +312,7 @@ describe('downgradeFromSyncable', () => {
 
         expect(result).toHaveLength(1);
         expect(result[0].name).toBe('存活的');
-        // 確認 sync metadata 已移除
-        expect((result[0] as unknown as Record<string, unknown>).updatedAt).toBeUndefined();
+        // 確認 isDeleted 已移除（updatedAt 保留為可選欄位）
         expect((result[0] as unknown as Record<string, unknown>).isDeleted).toBeUndefined();
     });
 });
@@ -302,8 +336,9 @@ describe('createEmptySyncState', () => {
         const state = createEmptySyncState('test-device');
 
         expect(state.favorites).toEqual([]);
-        expect(state.queue).toEqual([]);
-        expect(state.currentDailyId).toBeNull();
+        expect(state.groups).toEqual([]);
+        expect(state.groupQueues).toEqual({});
+        expect(state.groupCurrentDailyIds).toEqual({});
         expect(state._syncVersion).toBe(0);
         expect(state._deviceId).toBe('test-device');
     });
@@ -337,7 +372,7 @@ describe('mergeStates — Tombstone TTL 邊界', () => {
     });
 });
 
-describe('mergeStates — currentDailyId 回退邏輯', () => {
+describe('mergeStates — groupCurrentDailyIds 回退邏輯', () => {
     it('若選定的 currentDailyId 指向已刪除項目，fallback 到 queue[0]', () => {
         const recentTime = new Date().toISOString();
         const alive = makeFavorite('alive', '存活', recentTime, false);
@@ -353,7 +388,7 @@ describe('mergeStates — currentDailyId 回退邏輯', () => {
 
         const merged = mergeStates(local, remote);
         // dead 被刪除後不在 queue 中，currentDailyId 應 fallback
-        expect(merged.currentDailyId).toBe('alive');
+        expect(getCurrentDailyId(merged)).toBe('alive');
     });
 });
 
@@ -432,10 +467,11 @@ describe('mergeStates — Queue 附加新 ID', () => {
         });
 
         const merged = mergeStates(local, remote);
+        const q = getQueue(merged);
 
-        expect(merged.queue).toContain('a');
-        expect(merged.queue).toContain('b');
+        expect(q).toContain('a');
+        expect(q).toContain('b');
         // 'a' 在 baseQueue（local version 較高）中，'b' 是新增的，附加在後
-        expect(merged.queue.indexOf('a')).toBeLessThan(merged.queue.indexOf('b'));
+        expect(q.indexOf('a')).toBeLessThan(q.indexOf('b'));
     });
 });

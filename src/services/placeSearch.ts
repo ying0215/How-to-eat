@@ -20,6 +20,7 @@
 
 import { PlaceSearchResult } from '../types/models';
 import { resolveCategory } from '../constants/categories';
+import { fetchWithResilience } from '../utils/fetchWithResilience';
 
 // ── 設定常數 ─────────────────────────────────────────────────────────────────
 
@@ -61,26 +62,7 @@ const isPlacesApiConfigured = (): boolean => {
         && !GOOGLE_PLACES_API_KEY.includes('your-api-key');
 };
 
-/** 帶有 timeout 的 fetch */
-const fetchWithTimeout = (
-    input: string,
-    init?: RequestInit,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<Response> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    return fetch(input, { ...init, signal: controller.signal })
-        .then((res) => {
-            clearTimeout(timer);
-            return res;
-        })
-        .catch((err) => {
-            clearTimeout(timer);
-            if (err.name === 'AbortError') throw new Error('搜尋請求逾時，請檢查網路連線');
-            throw err;
-        });
-};
 
 /**
  * 將 Google Places Text Search 回應轉換為 App 內部的 PlaceSearchResult 模型
@@ -160,7 +142,7 @@ export const placeSearchService = {
                 };
             }
 
-            const response = await fetchWithTimeout(PLACES_TEXT_SEARCH_URL, {
+            const response = await fetchWithResilience(PLACES_TEXT_SEARCH_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -180,7 +162,7 @@ export const placeSearchService = {
                     ].join(','),
                 },
                 body: JSON.stringify(requestBody),
-            });
+            }, { endpointId: 'placeSearch.searchPlaces', maxRetries: 2, timeoutMs: REQUEST_TIMEOUT_MS });
 
             if (!response.ok) {
                 const errorText = await response.text();

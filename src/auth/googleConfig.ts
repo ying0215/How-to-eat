@@ -60,6 +60,10 @@ const WEB_CLIENT_ID: string =
 const ANDROID_CLIENT_ID: string =
     process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '';
 
+/** iOS 平台用的 OAuth Client ID（iOS 類型） */
+const IOS_CLIENT_ID: string =
+    process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+
 /**
  * 根據當前平台自動選擇對應的 Google OAuth Client ID。
  *
@@ -75,7 +79,7 @@ function selectClientId(): string {
         case 'android':
             return ANDROID_CLIENT_ID || WEB_CLIENT_ID;  // fallback to Web if Android not set
         case 'ios':
-            return WEB_CLIENT_ID;  // TODO: 建立 iOS Client ID 後替換
+            return IOS_CLIENT_ID || WEB_CLIENT_ID;      // fallback to Web if iOS not set
         case 'web':
         default:
             return WEB_CLIENT_ID;

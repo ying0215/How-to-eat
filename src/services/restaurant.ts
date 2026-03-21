@@ -24,6 +24,7 @@ import {
     GetRandomRestaurantResponse,
 } from '../types/api';
 import { CATEGORY_TO_PLACES_TYPE, resolveCategory } from '../constants/categories';
+import { fetchWithResilience } from '../utils/fetchWithResilience';
 
 // ── 設定常數 ─────────────────────────────────────────────────────────────────
 
@@ -141,26 +142,7 @@ const isPlacesApiConfigured = (): boolean => {
         && !GOOGLE_PLACES_API_KEY.includes('your-api-key');
 };
 
-/** 帶有 timeout 的 fetch */
-const fetchWithTimeout = (
-    input: string,
-    init?: RequestInit,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<Response> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    return fetch(input, { ...init, signal: controller.signal })
-        .then((res) => {
-            clearTimeout(timer);
-            return res;
-        })
-        .catch((err) => {
-            clearTimeout(timer);
-            if (err.name === 'AbortError') throw new Error('Request timeout');
-            throw err;
-        });
-};
 
 /**
  * 根據兩點經緯度計算距離（Haversine 公式）
@@ -315,7 +297,7 @@ export const restaurantService = {
                 }
 
                 // 呼叫 Places API (New)
-                const response = await fetchWithTimeout(PLACES_NEARBY_URL, {
+                const response = await fetchWithResilience(PLACES_NEARBY_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -335,7 +317,7 @@ export const restaurantService = {
                         ].join(','),
                     },
                     body: JSON.stringify(requestBody),
-                });
+                }, { endpointId: 'restaurant.getNearest', maxRetries: 2, timeoutMs: REQUEST_TIMEOUT_MS });
 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -370,7 +352,8 @@ export const restaurantService = {
                     '[restaurantService.getNearest] Error:',
                     message,
                 );
-                throw new Error(message);
+                console.warn('[restaurantService.getNearest] 降級使用 Mock 資料，因為 API 呼叫失敗。');
+                // 不拋出錯誤，讓程式繼續往下走到 Mock fallback
             }
         }
 

@@ -37,6 +37,8 @@ export interface PlaceOpenStatus {
     isVerified: boolean;
 }
 
+import { fetchWithResilience } from '../utils/fetchWithResilience';
+
 // ── 內部型別 ─────────────────────────────────────────────────────────────────
 
 interface PlaceDetailsResponse {
@@ -56,26 +58,7 @@ const isPlacesApiConfigured = (): boolean => {
         && !GOOGLE_PLACES_API_KEY.includes('your-api-key');
 };
 
-/** 帶有 timeout 的 fetch */
-const fetchWithTimeout = (
-    input: string,
-    init?: RequestInit,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<Response> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    return fetch(input, { ...init, signal: controller.signal })
-        .then((res) => {
-            clearTimeout(timer);
-            return res;
-        })
-        .catch((err) => {
-            clearTimeout(timer);
-            if (err.name === 'AbortError') throw new Error('查詢逾時');
-            throw err;
-        });
-};
 
 // ── 快取設定 ─────────────────────────────────────────────────────────────────
 
@@ -123,17 +106,16 @@ export const placeDetailsService = {
 
         try {
             // Places API (New) 使用 RESTful URL 格式
-            // GET https://places.googleapis.com/v1/places/{placeId}
             const url = `${PLACES_DETAILS_BASE_URL}/${placeId}`;
 
-            const response = await fetchWithTimeout(url, {
+            const response = await fetchWithResilience(url, {
                 method: 'GET',
                 headers: {
                     'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
                     // 最小 Field Mask — 僅查營業狀態，最低計費等級
                     'X-Goog-FieldMask': 'currentOpeningHours.openNow,regularOpeningHours.openNow',
                 },
-            });
+            }, { endpointId: 'placeDetails.getPlaceOpenStatus', maxRetries: 2, timeoutMs: REQUEST_TIMEOUT_MS });
 
             if (!response.ok) {
                 const errorText = await response.text();

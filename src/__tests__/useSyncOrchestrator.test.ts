@@ -117,11 +117,15 @@ beforeEach(() => {
 
     useFavoriteStore.setState({
         favorites: [
-            { id: 'r1', name: '老王牛肉麵', createdAt: '2025-01-01T00:00:00Z' },
+            { id: 'r1', name: '老王牛肉麵', groupId: 'default-group', createdAt: '2025-01-01T00:00:00Z' },
         ],
-        queue: ['r1'],
-        currentDailyId: 'r1',
+        groups: [{ id: 'default-group', name: '群組A', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' }],
+        activeGroupId: 'default-group',
+        groupQueues: { 'default-group': ['r1'] },
+        groupCurrentDailyIds: { 'default-group': 'r1' },
         lastUpdateDate: '2025-03-13',
+        _deletedGroupIds: [],
+        _deletedFavoriteIds: [],
     });
 });
 
@@ -196,13 +200,16 @@ describe('performSync — 雙向合併', () => {
                 {
                     id: 'remote-1',
                     name: '遠端餐廳',
+                    groupId: 'default-group',
                     createdAt: '2025-02-01T00:00:00Z',
                     updatedAt: '2025-03-13T00:00:00Z',
                     isDeleted: false,
                 },
             ],
-            queue: ['remote-1'],
-            currentDailyId: 'remote-1',
+            groups: [{ id: 'default-group', name: '群組A', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' }],
+            activeGroupId: 'default-group',
+            groupQueues: { 'default-group': ['remote-1'] },
+            groupCurrentDailyIds: { 'default-group': 'remote-1' },
             lastUpdateDate: '2025-03-13',
             _syncVersion: 3,
             _lastSyncedAt: '2025-03-13T12:00:00Z',
@@ -277,13 +284,16 @@ describe('pullFromCloud', () => {
                 {
                     id: 'cloud-only',
                     name: '雲端餐廳',
+                    groupId: 'default-group',
                     createdAt: '2025-02-01T00:00:00Z',
                     updatedAt: '2025-03-13T00:00:00Z',
                     isDeleted: false,
                 },
             ],
-            queue: ['cloud-only'],
-            currentDailyId: 'cloud-only',
+            groups: [{ id: 'default-group', name: '群組A', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' }],
+            activeGroupId: 'default-group',
+            groupQueues: { 'default-group': ['cloud-only'] },
+            groupCurrentDailyIds: { 'default-group': 'cloud-only' },
             lastUpdateDate: '2025-03-13',
             _syncVersion: 10,
             _lastSyncedAt: '2025-03-13T12:00:00Z',
@@ -358,5 +368,72 @@ describe('useSyncMetaStore — 狀態轉換', () => {
 
         useSyncMetaStore.getState()._setSyncEnabled(true);
         expect(useSyncMetaStore.getState().syncEnabled).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: 增量寫回（Bug 3 修復驗證）
+// ---------------------------------------------------------------------------
+
+describe('performSync — 增量寫回保留並行操作', () => {
+    it('同步期間新建的群組不應被覆蓋', async () => {
+        // 設定 mock：下載時雲端無資料，上傳時延遲一下讓我們有機會在中間新增群組
+        mockDownload.mockResolvedValue(null);
+        mockUpload.mockImplementation(async () => {
+            // 在上傳過程中，模擬使用者新建了一個群組
+            const now = new Date().toISOString();
+            const currentState = useFavoriteStore.getState();
+            useFavoriteStore.setState({
+                groups: [
+                    ...currentState.groups,
+                    { id: 'concurrent-group', name: '同步中新建', createdAt: now, updatedAt: now },
+                ],
+                groupQueues: {
+                    ...currentState.groupQueues,
+                    'concurrent-group': [],
+                },
+                groupCurrentDailyIds: {
+                    ...currentState.groupCurrentDailyIds,
+                    'concurrent-group': null,
+                },
+            });
+            return 'file-id';
+        });
+
+        const result = await performSync(validGetToken);
+
+        expect(result).toBe(true);
+
+        // 同步期間新建的群組應該被保留
+        const finalState = useFavoriteStore.getState();
+        const groupIds = finalState.groups.map((g: any) => g.id);
+        expect(groupIds).toContain('default-group');
+        expect(groupIds).toContain('concurrent-group');
+        // queue 也應該被保留
+        expect(finalState.groupQueues['concurrent-group']).toBeDefined();
+    });
+
+    it('同步期間新增的刪除記錄不應被清除', async () => {
+        mockDownload.mockResolvedValue(null);
+        mockUpload.mockImplementation(async () => {
+            // 在上傳過程中，模擬使用者刪除了一個餐廳
+            const currentState = useFavoriteStore.getState();
+            useFavoriteStore.setState({
+                _deletedFavoriteIds: [
+                    ...currentState._deletedFavoriteIds,
+                    { id: 'pending-delete', deletedAt: new Date().toISOString() },
+                ],
+            });
+            return 'file-id';
+        });
+
+        const result = await performSync(validGetToken);
+
+        expect(result).toBe(true);
+
+        // 同步期間新增的刪除記錄應該被保留（尚未同步）
+        const finalState = useFavoriteStore.getState();
+        const pendingDeleteIds = finalState._deletedFavoriteIds.map((r: any) => r.id);
+        expect(pendingDeleteIds).toContain('pending-delete');
     });
 });

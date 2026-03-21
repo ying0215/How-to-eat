@@ -54,18 +54,22 @@ function makeErrorResponse(status: number, body: string): Response {
 }
 
 function makeSyncState(): SyncableFavoriteState {
+    const groupId = 'default-group';
     return {
         favorites: [
             {
                 id: 'r1',
                 name: '測試餐廳',
+                groupId,
                 createdAt: '2025-01-01T00:00:00Z',
                 updatedAt: '2025-03-13T00:00:00Z',
                 isDeleted: false,
             },
         ],
-        queue: ['r1'],
-        currentDailyId: 'r1',
+        groups: [{ id: groupId, name: '群組A', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z' }],
+        activeGroupId: groupId,
+        groupQueues: { [groupId]: ['r1'] },
+        groupCurrentDailyIds: { [groupId]: 'r1' },
         lastUpdateDate: '2025-03-13',
         _syncVersion: 5,
         _lastSyncedAt: '2025-03-13T12:00:00Z',

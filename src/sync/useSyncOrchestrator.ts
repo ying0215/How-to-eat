@@ -27,13 +27,16 @@ import { downloadFavorites, uploadFavorites, DriveApiError, validateTokenScopes 
 import {
     mergeStates,
     upgradeToSyncable,
+    upgradeGroupsToSyncable,
     downgradeFromSyncable,
+    downgradeGroupsFromSyncable,
     generateDeviceId,
     createEmptySyncState,
     type SyncableFavoriteState,
     type SyncableFavorite,
+    type SyncableGroup,
 } from './mergeStrategy';
-import { useFavoriteStore, type FavoriteRestaurant } from '../store/useFavoriteStore';
+import { useFavoriteStore, type FavoriteRestaurant, type DeletedItemRecord } from '../store/useFavoriteStore';
 import { getNetworkStatus, useNetworkStore } from '../hooks/useNetworkStatus';
 
 // ---------------------------------------------------------------------------
@@ -132,6 +135,202 @@ export function isSyncWriteback(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// 🔧 工具函式：組裝本地狀態為同步格式
+// ---------------------------------------------------------------------------
+
+/**
+ * 從 useFavoriteStore 和 syncMeta 組裝出 SyncableFavoriteState，
+ * 供 performSync/pullFromCloud 使用（避免重複程式碼）。
+ *
+ * 🔑 Tombstone 策略：
+ *   store 中的 deleteGroup/removeFavorite 使用硬刪除（直接移除），
+ *   但會把已刪除的 ID 和時間戳記錄在 _deletedGroupIds / _deletedFavoriteIds 中。
+ *   此函式在組裝同步狀態時，為這些記錄產生 tombstone（isDeleted: true），
+ *   使用實際的刪除時間作為 updatedAt，確保 mergeStates 能正確傳播刪除操作到雲端。
+ */
+function assembleLocalState(deviceId: string, syncVersion: number, lastSyncedAt: string | null): SyncableFavoriteState {
+    const favStore = useFavoriteStore.getState();
+    const now = new Date().toISOString();
+
+    // 現存的 favorites → isDeleted: false
+    const liveFavorites = upgradeToSyncable(favStore.favorites);
+
+    // 已硬刪除的 favorites → tombstone（isDeleted: true），使用實際刪除時間
+    const deletedFavRecords: DeletedItemRecord[] = favStore._deletedFavoriteIds ?? [];
+    const deletedFavTombstones: SyncableFavorite[] = deletedFavRecords.map((record) => ({
+        id: record.id,
+        name: '',
+        groupId: '',
+        createdAt: record.deletedAt,
+        updatedAt: record.deletedAt, // 使用實際刪除時間，非同步當下時間
+        isDeleted: true,
+    }));
+
+    // 現存的 groups → isDeleted: false
+    const liveGroups = upgradeGroupsToSyncable(favStore.groups);
+
+    // 已硬刪除的 groups → tombstone（isDeleted: true），使用實際刪除時間
+    const deletedGroupRecords: DeletedItemRecord[] = favStore._deletedGroupIds ?? [];
+    const deletedGroupTombstones: SyncableGroup[] = deletedGroupRecords.map((record) => ({
+        id: record.id,
+        name: '',
+        createdAt: record.deletedAt,
+        updatedAt: record.deletedAt, // 使用實際刪除時間，非同步當下時間
+        isDeleted: true,
+    }));
+
+    return {
+        favorites: [...liveFavorites, ...deletedFavTombstones],
+        groups: [...liveGroups, ...deletedGroupTombstones],
+        activeGroupId: favStore.activeGroupId,
+        groupQueues: { ...favStore.groupQueues },
+        groupCurrentDailyIds: { ...favStore.groupCurrentDailyIds },
+        lastUpdateDate: favStore.lastUpdateDate,
+        _syncVersion: syncVersion,
+        _lastSyncedAt: lastSyncedAt ?? new Date().toISOString(),
+        _deviceId: deviceId,
+    };
+}
+
+/**
+ * 將合併後的同步狀態寫回本地 useFavoriteStore。
+ * 自動清理 tombstone / 孤兒 queue ID。
+ *
+ * 🔑 增量合併策略（Bug 3 修復）：
+ *   同步過程（下載 → 合併 → 上傳）可能耗時數秒。在此期間使用者
+ *   可能已經建立新群組或刪除其他項目。為避免覆蓋這些並行操作：
+ *   1. 只移除「本次同步已處理」的已刪除記錄，保留同步期間新增的
+ *   2. 將同步期間新增的 groups/favorites 與合併結果做 union
+ *
+ * @param mergedState 合併後的同步狀態
+ * @param syncedDeletedGroupIds 本次同步已處理的群組刪除記錄（快照）
+ * @param syncedDeletedFavIds 本次同步已處理的餐廳刪除記錄（快照）
+ * @param options.forceOverwrite 若為 true，跳過增量合併並完全覆蓋本地狀態（用於 pullFromCloud）
+ */
+function writebackMergedState(
+    mergedState: SyncableFavoriteState,
+    syncedDeletedGroupIds?: DeletedItemRecord[],
+    syncedDeletedFavIds?: DeletedItemRecord[],
+    options?: { forceOverwrite?: boolean },
+): void {
+    const cleanFavorites = downgradeFromSyncable(mergedState.favorites);
+    const cleanGroups = downgradeGroupsFromSyncable(mergedState.groups ?? []);
+    const activeIds = new Set(cleanFavorites.map((f) => f.id));
+
+    // 清理每個群組的 queue 和 currentDailyId
+    const cleanGroupQueues: Record<string, string[]> = {};
+    const cleanGroupCurrentDailyIds: Record<string, string | null> = {};
+
+    for (const group of cleanGroups) {
+        const gid = group.id;
+        const queue = (mergedState.groupQueues?.[gid] ?? []).filter((id) => activeIds.has(id));
+        cleanGroupQueues[gid] = queue;
+
+        const currentId = mergedState.groupCurrentDailyIds?.[gid] ?? null;
+        cleanGroupCurrentDailyIds[gid] = currentId && queue.includes(currentId)
+            ? currentId
+            : (queue[0] ?? null);
+    }
+
+    // 確保 activeGroupId 合法
+    const activeGroupIds = new Set(cleanGroups.map((g) => g.id));
+    const cleanActiveGroupId = activeGroupIds.has(mergedState.activeGroupId)
+        ? mergedState.activeGroupId
+        : (cleanGroups[0]?.id ?? '');
+
+    runAsSyncWriteback(() => {
+        const forceOverwrite = options?.forceOverwrite ?? false;
+
+        if (forceOverwrite) {
+            // 強制覆蓋模式：完全用合併結果替換本地狀態，清空所有待處理刪除記錄
+            useFavoriteStore.setState({
+                favorites: cleanFavorites,
+                groups: cleanGroups,
+                activeGroupId: cleanActiveGroupId,
+                groupQueues: cleanGroupQueues,
+                groupCurrentDailyIds: cleanGroupCurrentDailyIds,
+                lastUpdateDate: mergedState.lastUpdateDate,
+                _deletedGroupIds: [],
+                _deletedFavoriteIds: [],
+            });
+            return;
+        }
+
+        // ── 增量合併模式：保留同步期間的並行操作 ──
+        // 重新讀取 store 的最新狀態，偵測同步期間的並行操作
+        const currentStore = useFavoriteStore.getState();
+
+        // ── 建立合併結果中的 tombstone ID 集合 ──
+        // 這些項目被合併邏輯判定為「已刪除」（來自遠端或本地 tombstone）
+        // 不應再被當作「同步期間新建」而重新加回
+        const tombstonedGroupIds = new Set(
+            (mergedState.groups ?? []).filter((g) => g.isDeleted).map((g) => g.id),
+        );
+        const tombstonedFavIds = new Set(
+            mergedState.favorites.filter((f) => f.isDeleted).map((f) => f.id),
+        );
+
+        // ── 增量清理已刪除記錄 ──
+        // 只移除「本次同步已處理」的已刪除記錄，保留同步期間新增的刪除
+        const syncedGroupIdSet = new Set((syncedDeletedGroupIds ?? []).map((r) => r.id));
+        const syncedFavIdSet = new Set((syncedDeletedFavIds ?? []).map((r) => r.id));
+        const remainingDeletedGroups = (currentStore._deletedGroupIds ?? []).filter(
+            (r) => !syncedGroupIdSet.has(r.id),
+        );
+        const remainingDeletedFavs = (currentStore._deletedFavoriteIds ?? []).filter(
+            (r) => !syncedFavIdSet.has(r.id),
+        );
+
+        // ── 合併同步期間新增的 groups ──
+        // 找出 currentStore 中存在但 cleanGroups 中不存在的群組（同步期間新建的）
+        // 但排除被合併結果標記為已刪除的（tombstone），避免復活已刪除的群組
+        const mergedGroupIds = new Set(cleanGroups.map((g) => g.id));
+        const concurrentNewGroups = currentStore.groups.filter(
+            (g) => !mergedGroupIds.has(g.id) && !tombstonedGroupIds.has(g.id),
+        );
+        const finalGroups = [...cleanGroups, ...concurrentNewGroups];
+
+        // ── 合併同步期間新增的 favorites ──
+        // 同理排除被 tombstone 標記的項目
+        const mergedFavIds = new Set(cleanFavorites.map((f) => f.id));
+        const concurrentNewFavs = currentStore.favorites.filter(
+            (f) => !mergedFavIds.has(f.id) && !tombstonedFavIds.has(f.id),
+        );
+        const finalFavorites = [...cleanFavorites, ...concurrentNewFavs];
+
+        // ── 合併同步期間新增群組的 queue/currentDailyId ──
+        const finalGroupQueues = { ...cleanGroupQueues };
+        const finalGroupCurrentDailyIds = { ...cleanGroupCurrentDailyIds };
+        for (const g of concurrentNewGroups) {
+            if (!(g.id in finalGroupQueues)) {
+                finalGroupQueues[g.id] = currentStore.groupQueues[g.id] ?? [];
+                finalGroupCurrentDailyIds[g.id] = currentStore.groupCurrentDailyIds[g.id] ?? null;
+            }
+        }
+
+        // 確保 activeGroupId 仍合法（含新增的群組）
+        const allGroupIds = new Set(finalGroups.map((g) => g.id));
+        const finalActiveGroupId = allGroupIds.has(cleanActiveGroupId)
+            ? cleanActiveGroupId
+            : (allGroupIds.has(currentStore.activeGroupId)
+                ? currentStore.activeGroupId
+                : (finalGroups[0]?.id ?? ''));
+
+        useFavoriteStore.setState({
+            favorites: finalFavorites,
+            groups: finalGroups,
+            activeGroupId: finalActiveGroupId,
+            groupQueues: finalGroupQueues,
+            groupCurrentDailyIds: finalGroupCurrentDailyIds,
+            lastUpdateDate: mergedState.lastUpdateDate,
+            // 增量清理：只移除已同步的，保留同步期間新增的
+            _deletedGroupIds: remainingDeletedGroups,
+            _deletedFavoriteIds: remainingDeletedFavs,
+        });
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 🔄 Core Sync Logic（非 Hook 版本，可獨立測試）
 // ---------------------------------------------------------------------------
 
@@ -181,21 +380,17 @@ export async function performSync(
             syncMeta._setDeviceId(deviceId);
         }
 
+        // 📸 快照當前的已刪除記錄（同步開始前）
+        // writeback 時只清除這些已處理的記錄，保留同步期間新增的
+        const favStoreSnapshot = useFavoriteStore.getState();
+        const syncedDeletedGroupIds: DeletedItemRecord[] = [...(favStoreSnapshot._deletedGroupIds ?? [])];
+        const syncedDeletedFavIds: DeletedItemRecord[] = [...(favStoreSnapshot._deletedFavoriteIds ?? [])];
+
         // Step 1: 下載遠端資料
         const remoteState = await downloadFavorites(token);
 
         // Step 2: 組裝本地狀態為 SyncableFavoriteState
-        const favStore = useFavoriteStore.getState();
-        const localSyncables = upgradeToSyncable(favStore.favorites);
-        const localState: SyncableFavoriteState = {
-            favorites: localSyncables,
-            queue: [...favStore.queue],
-            currentDailyId: favStore.currentDailyId,
-            lastUpdateDate: favStore.lastUpdateDate,
-            _syncVersion: syncMeta.syncVersion,
-            _lastSyncedAt: syncMeta.lastSyncedAt ?? new Date().toISOString(),
-            _deviceId: deviceId,
-        };
+        const localState = assembleLocalState(deviceId, syncMeta.syncVersion, syncMeta.lastSyncedAt);
 
         // Step 3: 合併
         let mergedState: SyncableFavoriteState;
@@ -213,24 +408,8 @@ export async function performSync(
         // Step 4: 上傳合併結果到 Google Drive
         await uploadFavorites(token, mergedState);
 
-        // Step 5: 將合併結果寫回本地 Zustand Store
-        const cleanFavorites = downgradeFromSyncable(mergedState.favorites);
-        const activeIds = new Set(cleanFavorites.map((f) => f.id));
-        const cleanQueue = mergedState.queue.filter((id) => activeIds.has(id));
-        const cleanCurrentId =
-            mergedState.currentDailyId && cleanQueue.includes(mergedState.currentDailyId)
-                ? mergedState.currentDailyId
-                : cleanQueue[0] ?? null;
-
-        // 使用 writeback guard 避免寫回觸發 subscribe → 再次同步
-        runAsSyncWriteback(() => {
-            useFavoriteStore.setState({
-                favorites: cleanFavorites,
-                queue: cleanQueue,
-                currentDailyId: cleanCurrentId,
-                lastUpdateDate: mergedState.lastUpdateDate,
-            });
-        });
+        // Step 5: 將合併結果寫回本地 Zustand Store（增量合併，保留並行操作）
+        writebackMergedState(mergedState, syncedDeletedGroupIds, syncedDeletedFavIds);
 
         // Step 6: 更新同步 metadata
         syncMeta._setSyncSuccess(mergedState._syncVersion);
@@ -251,10 +430,6 @@ export async function performSync(
 
                     if (!scopeCheck.valid) {
                         // ── Token 缺少 drive.appdata scope ──
-                        // 這通常是因為：
-                        //   1. OAuth 同意畫面尚未宣告 drive.appdata scope
-                        //   2. 使用者在同意畫面加入 scope 之前就已經授權過了
-                        //   解決方式：登出後重新登入，取得包含新 scope 的 token
                         const scopeDiagMsg = scopeCheck.error
                             ? `Token 驗證失敗: ${scopeCheck.error}`
                             : `Token 缺少 drive.appdata scope（現有: ${scopeCheck.scopes.join(', ')}）`;
@@ -277,7 +452,6 @@ export async function performSync(
                     }
 
                     // ── Token 有 scope 但仍 403 ──
-                    // 可能原因：Cloud Console Drive API 未啟用、帳號不在 Test users 中
                     console.warn(
                         '[SyncOrchestrator] ⚠️ Token 擁有 drive.appdata scope 但仍收到 403。',
                         '\n  可能原因:',
@@ -287,28 +461,21 @@ export async function performSync(
                         '\n  嘗試用新 token 重試...',
                     );
 
-                    // Step B: 用當前 token（已驗證有 scope）重試一次
+                    // Step B: 重試一次（重新組裝＋合併＋上傳＋寫回）
                     const retryRemote = await downloadFavorites(currentToken);
-
-                    // 組裝本地資料
-                    const favStoreRetry = useFavoriteStore.getState();
-                    let deviceId = syncMeta.deviceId;
-                    if (!deviceId) {
-                        deviceId = generateDeviceId();
-                        syncMeta._setDeviceId(deviceId);
+                    let deviceIdRetry = syncMeta.deviceId;
+                    if (!deviceIdRetry) {
+                        deviceIdRetry = generateDeviceId();
+                        syncMeta._setDeviceId(deviceIdRetry);
                     }
-                    const localSyncablesRetry = upgradeToSyncable(favStoreRetry.favorites);
-                    const localStateRetry: SyncableFavoriteState = {
-                        favorites: localSyncablesRetry,
-                        queue: [...favStoreRetry.queue],
-                        currentDailyId: favStoreRetry.currentDailyId,
-                        lastUpdateDate: favStoreRetry.lastUpdateDate,
-                        _syncVersion: syncMeta.syncVersion,
-                        _lastSyncedAt: syncMeta.lastSyncedAt ?? new Date().toISOString(),
-                        _deviceId: deviceId,
-                    };
 
-                    // 合併
+                    // 重新快照已刪除記錄
+                    const retryFavStore = useFavoriteStore.getState();
+                    const retrySyncedDeletedGroupIds: DeletedItemRecord[] = [...(retryFavStore._deletedGroupIds ?? [])];
+                    const retrySyncedDeletedFavIds: DeletedItemRecord[] = [...(retryFavStore._deletedFavoriteIds ?? [])];
+
+                    const localStateRetry = assembleLocalState(deviceIdRetry, syncMeta.syncVersion, syncMeta.lastSyncedAt);
+
                     let retryMerged: SyncableFavoriteState;
                     if (retryRemote) {
                         retryMerged = mergeStates(localStateRetry, retryRemote);
@@ -320,27 +487,8 @@ export async function performSync(
                         };
                     }
 
-                    // 上傳
                     await uploadFavorites(currentToken, retryMerged);
-
-                    // 寫回本地
-                    const retryClean = downgradeFromSyncable(retryMerged.favorites);
-                    const retryActiveIds = new Set(retryClean.map((f) => f.id));
-                    const retryQueue = retryMerged.queue.filter((id) => retryActiveIds.has(id));
-                    const retryCurrentId =
-                        retryMerged.currentDailyId && retryQueue.includes(retryMerged.currentDailyId)
-                            ? retryMerged.currentDailyId
-                            : retryQueue[0] ?? null;
-
-                    runAsSyncWriteback(() => {
-                        useFavoriteStore.setState({
-                            favorites: retryClean,
-                            queue: retryQueue,
-                            currentDailyId: retryCurrentId,
-                            lastUpdateDate: retryMerged.lastUpdateDate,
-                        });
-                    });
-
+                    writebackMergedState(retryMerged, retrySyncedDeletedGroupIds, retrySyncedDeletedFavIds);
                     syncMeta._setSyncSuccess(retryMerged._syncVersion);
                     console.info('[SyncOrchestrator] ✅ 403 重試成功！');
                     return true;
@@ -397,24 +545,14 @@ export async function pullFromCloud(
             return false;
         }
 
-        // 直接覆蓋本地
-        const cleanFavorites = downgradeFromSyncable(remoteState.favorites);
-        const activeIds = new Set(cleanFavorites.map((f) => f.id));
-        const cleanQueue = remoteState.queue.filter((id: string) => activeIds.has(id));
-
-        // 使用 writeback guard 避免寫回觸發 subscribe → 再次同步
-        runAsSyncWriteback(() => {
-            useFavoriteStore.setState({
-                favorites: cleanFavorites,
-                queue: cleanQueue,
-                currentDailyId:
-                    remoteState.currentDailyId && cleanQueue.includes(remoteState.currentDailyId)
-                        ? remoteState.currentDailyId
-                        : cleanQueue[0] ?? null,
-                lastUpdateDate: remoteState.lastUpdateDate,
-            });
-        });
-
+        // 強制覆蓋本地：將所有待處理的刪除記錄標記為「已同步」以便清空
+        const currentStore = useFavoriteStore.getState();
+        writebackMergedState(
+            remoteState,
+            currentStore._deletedGroupIds ?? [],
+            currentStore._deletedFavoriteIds ?? [],
+            { forceOverwrite: true },
+        );
         syncMeta._setSyncSuccess(remoteState._syncVersion);
         return true;
     } catch (err) {

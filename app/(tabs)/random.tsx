@@ -20,26 +20,31 @@ import { theme } from '../../src/constants/theme';
 import { useFavoriteStore, FavoriteRestaurant } from '../../src/store/useFavoriteStore';
 import { useUserStore } from '../../src/store/useUserStore';
 import { useMapJump } from '../../src/hooks/useMapJump';
-import { usePlaceSearch } from '../../src/hooks/usePlaceSearch';
-import { useLocation } from '../../src/hooks/useLocation';
+import AddFavoriteModal from '../../src/components/features/AddFavoriteModal';
 import { placeDetailsService, PlaceOpenStatus } from '../../src/services/placeDetails';
-import { parseGoogleMapsUrl, isGoogleMapsUrl, ParseResult, batchParseGoogleMapsUrls, BatchParseResult } from '../../src/services/googleMapsUrlParser';
-import { PlaceSearchResult } from '../../src/types/models';
 
 import { CATEGORY_LABELS, FOOD_CATEGORIES, resolveCategory } from '../../src/constants/categories';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 
 export default function FavoriteRotationScreen() {
     'use no memo'; // React Compiler opt-out: 含 Zustand 外部 store 訂閱時，編譯器可能錯誤 memoize local state 更新
     const router = useRouter();
     const {
-        favorites, currentDailyId,
+        favorites: allFavorites,
+        groups,
+        activeGroupId,
+        groupQueues,
+        groupCurrentDailyIds,
         addFavorite, removeFavorite, skipCurrent, checkDaily, findDuplicate
     } = useFavoriteStore();
     const transportMode = useUserStore((s) => s.transportMode);
     const { jumpToMap } = useMapJump();
-    const { location } = useLocation();
+
+
+    // ── 群組感知：只從啟用中群組抽獎 ──
+    const favorites = useMemo(() => allFavorites.filter((f) => f.groupId === activeGroupId), [allFavorites, activeGroupId]);
+    const currentDailyId = groupCurrentDailyIds[activeGroupId] ?? null;
+    const activeGroupName = groups.find((g) => g.id === activeGroupId)?.name ?? '最愛';
 
     // ── 盲盒狀態（需求 1）──
     const [isRevealed, setIsRevealed] = useState(false);
@@ -54,56 +59,6 @@ export default function FavoriteRotationScreen() {
     // ── Modal 狀態 ──
     const [showAddModal, setShowAddModal] = useState(false);
     const [showListModal, setShowListModal] = useState(false);
-    const [addMode, setAddMode] = useState<'search' | 'manual' | 'paste'>('search');
-    const [newName, setNewName] = useState('');
-    const [newNote, setNewNote] = useState('');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [selectedPlace, setSelectedPlace] = useState<PlaceSearchResult | null>(null);
-
-    // ── 貼上連結狀態 ──
-    const [pasteUrl, setPasteUrl] = useState('');
-    const [pasteLoading, setPasteLoading] = useState(false);
-    const [pasteResult, setPasteResult] = useState<ParseResult | null>(null);
-
-    // ── 批量匯入狀態 ──
-    const [batchResults, setBatchResults] = useState<BatchParseResult | null>(null);
-    const [batchImporting, setBatchImporting] = useState(false);
-
-    // ── 剪貼簿自動偵測：切換到貼上模式時自動讀取 ──
-    useEffect(() => {
-        if (addMode !== 'paste' || !showAddModal) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const text = await Clipboard.getStringAsync();
-                if (cancelled || !text) return;
-                const trimmed = text.trim();
-                if (isGoogleMapsUrl(trimmed)) {
-                    setPasteUrl(trimmed);
-                    setPasteLoading(true);
-                    setPasteResult(null);
-                    try {
-                        const userLoc = (location?.latitude != null && location?.longitude != null) ? { lat: location.latitude, lng: location.longitude } : null;
-                        const result = await parseGoogleMapsUrl(trimmed, userLoc);
-                        if (!cancelled) setPasteResult(result);
-                    } catch (err: unknown) {
-                        if (!cancelled) {
-                            const msg = err instanceof Error ? err.message : '解析失敗';
-                            setPasteResult({ restaurant: null, error: msg, source: 'failed' });
-                        }
-                    } finally {
-                        if (!cancelled) setPasteLoading(false);
-                    }
-                }
-            } catch {
-                // 剪貼簿讀取失敗——靜默略過
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [addMode, showAddModal]);
-
-    // ── Hooks ──
-    const { results: searchResults, loading: searchLoading, error: searchError, searchImmediate, clearResults } = usePlaceSearch();
 
     // 每次進畫面檢查是否要跨日推進
     // eslint-disable-next-line react-hooks/exhaustive-deps — checkDaily 來自 Zustand 穩定引用
@@ -134,8 +89,9 @@ export default function FavoriteRotationScreen() {
     // ── 篩選後的 queue ──
     const filteredQueue = useMemo(() => {
         const filteredIds = new Set(filteredFavorites.map((f) => f.id));
-        return useFavoriteStore.getState().queue.filter((id) => filteredIds.has(id));
-    }, [filteredFavorites]);
+        const groupQueue = groupQueues[activeGroupId] ?? [];
+        return groupQueue.filter((id) => filteredIds.has(id));
+    }, [filteredFavorites, groupQueues, activeGroupId]);
 
     // ── 當前推薦的餐廳（考慮篩選）──
     const [filteredCurrentId, setFilteredCurrentId] = useState<string | null>(null);
@@ -261,59 +217,6 @@ export default function FavoriteRotationScreen() {
     }, [filteredQueue, filteredFavorites, skipCurrent]);
 
     // ── 新增餐廳處理（含重複防呆） ──
-    const handleAddFromSearch = useCallback(() => {
-        if (!selectedPlace) {
-            Alert.alert('請先選擇一家餐廳');
-            return;
-        }
-        const dup = findDuplicate(selectedPlace.name, selectedPlace.placeId);
-        const doAdd = () => {
-            addFavorite(selectedPlace.name, newNote.trim() || undefined, {
-                address: selectedPlace.address,
-                category: selectedPlace.category,
-                placeId: selectedPlace.placeId,
-                latitude: selectedPlace.latitude,
-                longitude: selectedPlace.longitude,
-            });
-            resetAddModal();
-            Alert.alert('✅ 新增成功', `「${selectedPlace.name}」已加入最愛清單`);
-            setShowListModal(true);
-        };
-        if (dup) {
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [selectedPlace, newNote, addFavorite, clearResults, findDuplicate]);
-
-    const handleAddManual = useCallback(() => {
-        const trimmed = newName.trim();
-        if (!trimmed) {
-            Alert.alert('請輸入餐廳名稱');
-            return;
-        }
-        const dup = findDuplicate(trimmed);
-        const doAdd = () => {
-            addFavorite(trimmed, newNote.trim() || undefined);
-            setNewName('');
-            setNewNote('');
-            setShowAddModal(false);
-            Alert.alert('✅ 新增成功', `「${trimmed}」已加入最愛清單`);
-            setShowListModal(true);
-        };
-        if (dup) {
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [newName, newNote, addFavorite, findDuplicate]);
-
     const handleRemove = (id: string, name: string) => {
         Alert.alert('確認刪除', `確定要把「${name}」從最愛清單移除嗎？`, [
             { text: '取消', style: 'cancel' },
@@ -321,138 +224,6 @@ export default function FavoriteRotationScreen() {
         ]);
     };
 
-    const handleSearch = useCallback(() => {
-        searchImmediate(searchQuery, location?.latitude && location?.longitude ? { lat: location.latitude, lng: location.longitude } : undefined);
-    }, [searchQuery, searchImmediate, location]);
-
-    const resetAddModal = useCallback(() => {
-        setShowAddModal(false);
-        setSearchQuery('');
-        setSelectedPlace(null);
-        setNewName('');
-        setNewNote('');
-        setPasteUrl('');
-        setPasteResult(null);
-        setBatchResults(null);
-        setBatchImporting(false);
-        clearResults();
-        setAddMode('search');
-    }, [clearResults]);
-
-    // ── 貼上連結解析處理（單一 or 批量） ──
-    const handlePasteUrl = useCallback(async () => {
-        const trimmed = pasteUrl.trim();
-        if (!trimmed) {
-            Alert.alert('請貼上 Google Maps 連結');
-            return;
-        }
-        // 偵測多行 URL → 批量模式
-        const lines = trimmed.split(/[\n\r]+/).filter((l) => l.trim().length > 0);
-        const validLines = lines.filter((l) => isGoogleMapsUrl(l.trim()));
-        if (validLines.length > 1) {
-            setPasteLoading(true);
-            setBatchResults(null);
-            setPasteResult(null);
-            try {
-                const result = await batchParseGoogleMapsUrls(trimmed);
-                setBatchResults(result);
-            } catch (err: unknown) {
-                const msg = err instanceof Error ? err.message : '批量解析失敗';
-                Alert.alert('解析失敗', msg);
-            } finally {
-                setPasteLoading(false);
-            }
-            return;
-        }
-        // 單一 URL 模式
-        if (!isGoogleMapsUrl(trimmed)) {
-            Alert.alert('無效連結', '請貼上 Google Maps 的分享連結');
-            return;
-        }
-        setPasteLoading(true);
-        setPasteResult(null);
-        setBatchResults(null);
-        try {
-            const userLoc = (location?.latitude != null && location?.longitude != null) ? { lat: location.latitude, lng: location.longitude } : null;
-            const result = await parseGoogleMapsUrl(trimmed, userLoc);
-            setPasteResult(result);
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : '解析失敗';
-            setPasteResult({ restaurant: null, error: msg, source: 'failed' });
-        } finally {
-            setPasteLoading(false);
-        }
-    }, [pasteUrl]);
-
-    const handleAddFromPaste = useCallback(() => {
-        if (!pasteResult?.restaurant) {
-            Alert.alert('請先解析連結並確認餐廳資訊');
-            return;
-        }
-        const r = pasteResult.restaurant;
-        const dup = findDuplicate(r.name, r.placeId);
-        const doAdd = () => {
-            addFavorite(r.name, newNote.trim() || undefined, {
-                address: r.address,
-                category: r.category,
-                placeId: r.placeId,
-                latitude: r.latitude,
-                longitude: r.longitude,
-            });
-            resetAddModal();
-            Alert.alert('✅ 新增成功', `「${r.name}」已加入最愛清單`);
-            setShowListModal(true);
-        };
-        if (dup) {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                const confirmed = window.confirm(`⚠️ 「${dup.name}」已在清單中，仍要新增嗎？`);
-                if (confirmed) doAdd();
-                return;
-            }
-            Alert.alert('⚠️ 此餐廳已在清單中', `「${dup.name}」已經是你的最愛了`, [
-                { text: '仍要新增', onPress: doAdd },
-                { text: '取消', style: 'cancel' },
-            ]);
-            return;
-        }
-        doAdd();
-    }, [pasteResult, newNote, addFavorite, findDuplicate]);
-
-    // ── 批量新增所有成功解析的餐廳（含重複過濾） ──
-    const handleBatchAdd = useCallback(() => {
-        if (!batchResults) return;
-        const successItems = batchResults.results.filter((r) => r.restaurant !== null);
-        if (successItems.length === 0) {
-            Alert.alert('沒有可新增的餐廳');
-            return;
-        }
-        setBatchImporting(true);
-        let addedCount = 0;
-        let skippedCount = 0;
-        for (const item of successItems) {
-            const r = item.restaurant!;
-            const dup = findDuplicate(r.name, r.placeId);
-            if (dup) {
-                skippedCount++;
-                continue;
-            }
-            addFavorite(r.name, undefined, {
-                address: r.address,
-                category: r.category,
-                placeId: r.placeId,
-                latitude: r.latitude,
-                longitude: r.longitude,
-            });
-            addedCount++;
-        }
-        setBatchImporting(false);
-        resetAddModal();
-        const msg = skippedCount > 0
-            ? `成功新增 ${addedCount} 家，${skippedCount} 家已存在已略過`
-            : `成功新增 ${addedCount} 家餐廳`;
-        Alert.alert('✅ 批量匯入完成', msg);
-        setShowListModal(true);
-    }, [batchResults, addFavorite, findDuplicate]);
 
     // ─── 自訂 Header（與 menu / favorites / settings 統一 3 欄式版面）───
     const renderHeader = () => (
@@ -546,298 +317,6 @@ export default function FavoriteRotationScreen() {
         );
     };
 
-    // ─── 新增餐廳 Modal（需求 2：搜尋模式 + 手動輸入）───
-    function renderAddModal() {
-        return (
-            <Modal visible={showAddModal} transparent animationType="slide">
-                <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={styles.modalOverlay}
-                >
-                    <View style={[styles.modalContent, { maxHeight: '85%' }]}>
-                        <Text style={styles.modalTitle}>新增最愛餐廳</Text>
-
-                        {/* 模式切換 Tab */}
-                        <View style={styles.modeTabRow}>
-                            <Pressable
-                                onPress={() => setAddMode('search')}
-                                style={[styles.modeTab, addMode === 'search' && styles.modeTabActive]}
-                            >
-                                <Ionicons name="search-outline" size={16} color={addMode === 'search' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[styles.modeTabText, addMode === 'search' && styles.modeTabTextActive]}>搜尋餐廳</Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => setAddMode('manual')}
-                                style={[styles.modeTab, addMode === 'manual' && styles.modeTabActive]}
-                            >
-                                <Ionicons name="pencil-outline" size={16} color={addMode === 'manual' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[styles.modeTabText, addMode === 'manual' && styles.modeTabTextActive]}>手動輸入</Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={() => setAddMode('paste')}
-                                style={[styles.modeTab, addMode === 'paste' && styles.modeTabActive]}
-                            >
-                                <Ionicons name="link-outline" size={16} color={addMode === 'paste' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                                <Text style={[styles.modeTabText, addMode === 'paste' && styles.modeTabTextActive]}>貼上連結</Text>
-                            </Pressable>
-                        </View>
-
-                        {addMode === 'search' ? (
-                            <>
-                                {/* 搜尋列 */}
-                                <Text style={styles.inputLabel}>搜尋餐廳名稱</Text>
-                                <View style={styles.searchRow}>
-                                    <TextInput
-                                        style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                                        placeholder="例如：鼎泰豐"
-                                        value={searchQuery}
-                                        onChangeText={setSearchQuery}
-                                        onSubmitEditing={handleSearch}
-                                        autoFocus
-                                        returnKeyType="search"
-                                    />
-                                    <Pressable
-                                        onPress={handleSearch}
-                                        style={({ pressed }) => [styles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
-                                    >
-                                        <Ionicons name="search" size={20} color={theme.colors.onPrimary} />
-                                    </Pressable>
-                                </View>
-
-                                {/* 搜尋狀態 */}
-                                {searchLoading && (
-                                    <View style={styles.searchStatusRow}>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text style={styles.searchStatusText}>搜尋中...</Text>
-                                    </View>
-                                )}
-                                {searchError && (
-                                    <Text style={styles.searchErrorText}>{searchError}</Text>
-                                )}
-
-                                {/* 搜尋結果列表 */}
-                                {searchResults.length > 0 && (
-                                    <FlatList
-                                        data={searchResults}
-                                        keyExtractor={(item) => item.placeId}
-                                        style={{ maxHeight: 220, marginBottom: theme.spacing.md }}
-                                        renderItem={({ item }) => {
-                                            const isSelected = selectedPlace?.placeId === item.placeId;
-                                            return (
-                                                <Pressable
-                                                    onPress={() => setSelectedPlace(item)}
-                                                    style={[styles.searchResultItem, isSelected && styles.searchResultItemSelected]}
-                                                >
-                                                    <View style={{ flex: 1 }}>
-                                                        <Text style={styles.searchResultName}>{item.name}</Text>
-                                                        <Text style={styles.searchResultAddress}>{item.address}</Text>
-                                                        <View style={styles.searchResultMeta}>
-                                                            <Text style={styles.searchResultCategory}>{item.category}</Text>
-                                                            {item.rating > 0 && (
-                                                                <Text style={styles.searchResultRating}>⭐ {item.rating.toFixed(1)}</Text>
-                                                            )}
-                                                            <Text style={[styles.searchResultOpen, { color: item.isOpenNow ? theme.colors.success : theme.colors.error }]}>
-                                                                {item.isOpenNow ? '營業中' : '已打烊'}
-                                                            </Text>
-                                                        </View>
-                                                    </View>
-                                                    {isSelected && (
-                                                        <Ionicons name="checkmark-circle" size={24} color={theme.colors.primary} />
-                                                    )}
-                                                </Pressable>
-                                            );
-                                        }}
-                                        ItemSeparatorComponent={() => <View style={styles.separator} />}
-                                    />
-                                )}
-
-                                {/* 已選擇的餐廳預覽 */}
-                                {selectedPlace && (
-                                    <View style={styles.selectedPreview}>
-                                        <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                        <Text style={styles.selectedPreviewText}>已選擇：{selectedPlace.name}</Text>
-                                    </View>
-                                )}
-
-                            </>
-                        ) : addMode === 'manual' ? (
-                            <>
-                                {/* 手動輸入模式 */}
-                                <Text style={styles.inputLabel}>餐廳名稱 *</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="例如：鼎泰豐"
-                                    value={newName}
-                                    onChangeText={setNewName}
-                                    autoFocus
-                                />
-
-                                <Text style={styles.inputLabel}>備註（選填）</Text>
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="例如：推薦小籠包"
-                                    value={newNote}
-                                    onChangeText={setNewNote}
-                                />
-                            </>
-                        ) : (
-                            <>
-                                {/* 貼上連結模式 */}
-                                <Text style={styles.inputLabel}>貼上 Google Maps 分享連結</Text>
-                                <View style={styles.searchRow}>
-                                    <TextInput
-                                        style={[styles.input, { flex: 1, marginBottom: 0, minHeight: 44 }]}
-                                        placeholder={"https://maps.app.goo.gl/...\n可貼上多個連結（每行一個）"}
-                                        value={pasteUrl}
-                                        onChangeText={(text) => {
-                                            setPasteUrl(text);
-                                            setPasteResult(null);
-                                            setBatchResults(null);
-                                        }}
-                                        onSubmitEditing={handlePasteUrl}
-                                        autoFocus
-                                        autoCapitalize="none"
-                                        autoCorrect={false}
-                                        multiline
-                                        numberOfLines={3}
-                                        textAlignVertical="top"
-                                    />
-                                    <Pressable
-                                        onPress={handlePasteUrl}
-                                        style={({ pressed }) => [styles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
-                                        disabled={pasteLoading}
-                                    >
-                                        {pasteLoading ? (
-                                            <ActivityIndicator size="small" color={theme.colors.onPrimary} />
-                                        ) : (
-                                            <Ionicons name="arrow-forward" size={20} color={theme.colors.onPrimary} />
-                                        )}
-                                    </Pressable>
-                                </View>
-
-                                {/* 解析狀態 */}
-                                {pasteLoading && (
-                                    <View style={styles.searchStatusRow}>
-                                        <ActivityIndicator size="small" color={theme.colors.primary} />
-                                        <Text style={styles.searchStatusText}>解析連結中...</Text>
-                                    </View>
-                                )}
-
-                                {/* 解析錯誤 */}
-                                {pasteResult?.error && (
-                                    <View style={styles.pasteErrorContainer}>
-                                        <Ionicons name="alert-circle-outline" size={18} color={theme.colors.error} />
-                                        <Text style={styles.searchErrorText}>{pasteResult.error}</Text>
-                                    </View>
-                                )}
-
-                                {/* 解析結果預覽 */}
-                                {pasteResult?.restaurant && (
-                                    <View style={styles.pasteResultPreview}>
-                                        <View style={styles.selectedPreview}>
-                                            <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                            <Text style={styles.selectedPreviewText}>{pasteResult.restaurant.name}</Text>
-                                        </View>
-                                        <Text style={styles.pasteResultAddress}>📍 {pasteResult.restaurant.address}</Text>
-                                        <View style={styles.searchResultMeta}>
-                                            <Text style={styles.searchResultCategory}>{pasteResult.restaurant.category}</Text>
-                                            {pasteResult.restaurant.rating > 0 && (
-                                                <Text style={styles.searchResultRating}>⭐ {pasteResult.restaurant.rating.toFixed(1)}</Text>
-                                            )}
-                                            <Text style={[styles.searchResultOpen, { color: pasteResult.restaurant.isOpenNow ? theme.colors.success : theme.colors.error }]}>
-                                                {pasteResult.restaurant.isOpenNow ? '營業中' : '已打烊'}
-                                            </Text>
-                                        </View>
-
-
-                                    </View>
-                                )}
-
-                                {/* 備註 */}
-                                {pasteResult?.restaurant && (
-                                    <>
-                                        <Text style={styles.inputLabel}>備註（選填）</Text>
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="例如：朋友推薦"
-                                            value={newNote}
-                                            onChangeText={setNewNote}
-                                        />
-                                    </>
-                                )}
-
-                                {/* 批量解析結果 */}
-                                {batchResults && (
-                                    <View style={styles.pasteResultPreview}>
-                                        <View style={styles.selectedPreview}>
-                                            <Ionicons name="layers-outline" size={18} color={theme.colors.primary} />
-                                            <Text style={[styles.selectedPreviewText, { color: theme.colors.primary }]}>
-                                                偵測到 {batchResults.results.length} 個連結：{batchResults.successCount} 個成功、{batchResults.failedCount} 個失敗
-                                            </Text>
-                                        </View>
-                                        <View style={{ marginTop: theme.spacing.sm }}>
-                                            {batchResults.results.map((r, i) => (
-                                                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, paddingVertical: 4 }}>
-                                                    <Ionicons
-                                                        name={r.restaurant ? 'checkmark-circle' : 'close-circle'}
-                                                        size={16}
-                                                        color={r.restaurant ? theme.colors.success : theme.colors.error}
-                                                    />
-                                                    <Text style={[styles.searchResultName, { fontSize: 13, flex: 1 }]} numberOfLines={1}>
-                                                        {r.restaurant ? r.restaurant.name : (r.error || '解析失敗')}
-                                                    </Text>
-                                                    {r.restaurant?.category && (
-                                                        <Text style={[styles.searchResultCategory, { fontSize: 11 }]}>{r.restaurant.category}</Text>
-                                                    )}
-                                                </View>
-                                            ))}
-                                        </View>
-                                    </View>
-                                )}
-                            </>
-                        )}
-
-                        {/* 底部按鈕 */}
-                        <View style={styles.modalActions}>
-                            <Pressable
-                                style={({ pressed }) => [styles.modalBtn, styles.cancelBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
-                                onPress={resetAddModal}
-                            >
-                                <Text style={styles.cancelBtnText}>取消</Text>
-                            </Pressable>
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.modalBtn, styles.confirmBtn,
-                                    pressed && { opacity: theme.interaction.pressedOpacity },
-                                    (addMode === 'search' && !selectedPlace) && { opacity: 0.4 },
-                                    (addMode === 'paste' && !pasteResult?.restaurant && !batchResults) && { opacity: 0.4 },
-                                ]}
-                                onPress={
-                                    addMode === 'search' ? handleAddFromSearch
-                                        : addMode === 'paste'
-                                            ? (batchResults ? handleBatchAdd : handleAddFromPaste)
-                                            : handleAddManual
-                                }
-                                disabled={
-                                    (addMode === 'search' && !selectedPlace)
-                                    || (addMode === 'paste' && !pasteResult?.restaurant && !batchResults)
-                                    || batchImporting
-                                }
-                            >
-                                <Text style={styles.confirmBtnText}>
-                                    {batchResults
-                                        ? (batchImporting ? '匯入中...' : `全部新增 (${batchResults.successCount})`)
-                                        : '確認新增'
-                                    }
-                                </Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </KeyboardAvoidingView>
-            </Modal>
-        );
-    }
-
     // ─── 餐廳清單 Modal ───
     function renderListModal() {
         return (
@@ -900,7 +379,7 @@ export default function FavoriteRotationScreen() {
                             </View>
                         )}
                     </Pressable>
-                    {showAddModal && renderAddModal()}
+                    <AddFavoriteModal visible={showAddModal} onClose={() => setShowAddModal(false)} onAdded={() => setShowListModal(true)} />
                 </View>
             </View>
         );
@@ -917,7 +396,7 @@ export default function FavoriteRotationScreen() {
                     <Text style={styles.emptyTitle}>此分類沒有餐廳</Text>
                     <Text style={styles.emptyDesc}>試試選擇「全部」或其他分類</Text>
                 </View>
-                {showAddModal && renderAddModal()}
+                <AddFavoriteModal visible={showAddModal} onClose={() => setShowAddModal(false)} onAdded={() => setShowListModal(true)} />
                 {showListModal && renderListModal()}
             </View>
         );
@@ -997,7 +476,7 @@ export default function FavoriteRotationScreen() {
 
             </View>
 
-            {showAddModal && renderAddModal()}
+            <AddFavoriteModal visible={showAddModal} onClose={() => setShowAddModal(false)} onAdded={() => setShowListModal(true)} />
             {showListModal && renderListModal()}
         </View>
     );
@@ -1271,136 +750,6 @@ const styles = StyleSheet.create({
         color: theme.colors.text,
         marginBottom: theme.spacing.lg,
     },
-    // ── 模式切換 Tab（需求 2）──
-    modeTabRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.lg,
-    },
-    modeTab: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.background,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-    },
-    modeTabActive: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
-    },
-    modeTabText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        fontWeight: '600',
-    },
-    modeTabTextActive: {
-        color: theme.colors.onPrimary,
-    },
-    // ── 搜尋列 ──
-    searchRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        alignItems: 'center',
-        marginBottom: theme.spacing.md,
-    },
-    searchBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchStatusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.sm,
-    },
-    searchStatusText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-    },
-    searchErrorText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.error,
-        marginBottom: theme.spacing.sm,
-    },
-    // ── 搜尋結果列表 ──
-    searchResultItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-    },
-    searchResultItemSelected: {
-        backgroundColor: `${theme.colors.primary}12`,
-    },
-    searchResultName: {
-        ...theme.typography.body,
-        fontWeight: '600',
-        color: theme.colors.text,
-    },
-    searchResultAddress: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-        marginTop: 2,
-    },
-    searchResultMeta: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginTop: 4,
-    },
-    searchResultCategory: {
-        ...theme.typography.caption,
-        color: theme.colors.primary,
-        fontWeight: '600',
-    },
-    searchResultRating: {
-        ...theme.typography.caption,
-        color: theme.colors.star,
-    },
-    searchResultOpen: {
-        ...theme.typography.caption,
-        fontWeight: '500',
-    },
-    // ── 已選擇預覽 ──
-    selectedPreview: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        backgroundColor: `${theme.colors.success}12`,
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        marginBottom: theme.spacing.md,
-    },
-    selectedPreviewText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.success,
-        fontWeight: '600',
-    },
-    // ── 表單元素 ──
-    inputLabel: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.xs,
-    },
-    input: {
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        ...theme.typography.body,
-        marginBottom: theme.spacing.md,
-        color: theme.colors.text,
-    },
     modalActions: {
         flexDirection: 'row',
         gap: theme.spacing.md,
@@ -1430,26 +779,5 @@ const styles = StyleSheet.create({
     listItemCategory: { ...theme.typography.caption, color: theme.colors.primary, marginTop: 2, fontWeight: '500' },
     listItemNote: { ...theme.typography.caption, fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
     listItemAddress: { ...theme.typography.caption, fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-    // ── 貼上連結模式 ──
-    pasteErrorContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        marginBottom: theme.spacing.sm,
-        paddingHorizontal: theme.spacing.sm,
-    },
-    pasteResultPreview: {
-        backgroundColor: `${theme.colors.primary}08`,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        marginBottom: theme.spacing.md,
-        borderWidth: 1,
-        borderColor: `${theme.colors.primary}20`,
-    },
-    pasteResultAddress: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.sm,
-    },
     separator: { height: 1, backgroundColor: theme.colors.border },
 });

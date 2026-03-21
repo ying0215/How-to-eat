@@ -210,8 +210,10 @@ export default function SettingsScreen() {
                 const localSyncables = upgradeToSyncable(favStore.favorites);
                 const stateToUpload: SyncableFavoriteState = {
                     favorites: localSyncables,
-                    queue: [...favStore.queue],
-                    currentDailyId: favStore.currentDailyId,
+                    groups: favStore.groups.map(g => ({ ...g, isDeleted: false })),
+                    activeGroupId: favStore.activeGroupId,
+                    groupQueues: { ...favStore.groupQueues },
+                    groupCurrentDailyIds: { ...favStore.groupCurrentDailyIds },
                     lastUpdateDate: favStore.lastUpdateDate,
                     _syncVersion: syncMeta.syncVersion + 1,
                     _lastSyncedAt: new Date().toISOString(),
@@ -219,6 +221,8 @@ export default function SettingsScreen() {
                 };
                 await uploadFavorites(token, stateToUpload);
                 syncMeta._setSyncSuccess(stateToUpload._syncVersion);
+                // 推送完成 → 清空已刪除 ID 追蹤列表
+                useFavoriteStore.setState({ _deletedGroupIds: [], _deletedFavoriteIds: [] });
                 if (Platform.OS === 'web') window.alert('✅ 本地資料已成功推送到雲端。');
                 else Alert.alert('✅ 完成', '本地資料已成功推送到雲端。');
             } catch (err) {

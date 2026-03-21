@@ -4,6 +4,10 @@
  *
  * 注意：zustand store 使用純函式邏輯，不依賴 AsyncStorage（僅測試行為層）
  * 我們透過直接呼叫 store action 來驗證 state 變更。
+ *
+ * 群組感知更新（v2）：
+ *   - queue、currentDailyId 已遷移至 groupQueues[activeGroupId]、groupCurrentDailyIds[activeGroupId]
+ *   - 使用 getActiveGroupQueue() / getActiveGroupCurrentDailyId() 便利 getter
  */
 
 // Mock AsyncStorage 避免 native module 錯誤
@@ -20,6 +24,24 @@ beforeEach(() => {
     jest.resetModules();
 });
 
+// ---------------------------------------------------------------------------
+// Helpers — 取得群組感知的 queue / currentDailyId
+// ---------------------------------------------------------------------------
+
+function getQueue(store: any): string[] {
+    const state = store.getState();
+    return state.groupQueues?.[state.activeGroupId] ?? [];
+}
+
+function getCurrentDailyId(store: any): string | null {
+    const state = store.getState();
+    return state.groupCurrentDailyIds?.[state.activeGroupId] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 describe('useFavoriteStore — addFavorite', () => {
     it('第一次 addFavorite 時 currentDailyId 應設為新加入的 id', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
@@ -28,17 +50,18 @@ describe('useFavoriteStore — addFavorite', () => {
 
         const state = useFavoriteStore.getState();
         expect(state.favorites).toHaveLength(1);
-        expect(state.currentDailyId).toBe(state.favorites[0].id);
+        expect(getCurrentDailyId(useFavoriteStore)).toBe(state.favorites[0].id);
     });
 
     it('當 currentDailyId 是幽靈 ID（不在 queue 中）時，addFavorite 應重置為新 id', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
+        const activeGroupId = useFavoriteStore.getState().activeGroupId;
 
         // 直接注入損毀狀態（模擬 AsyncStorage 損毀場景）
         useFavoriteStore.setState({
             favorites: [],
-            queue: [],               // queue 是空的
-            currentDailyId: 'ghost-id-that-does-not-exist',  // 幽靈 ID
+            groupQueues: { [activeGroupId]: [] },                         // queue 是空的
+            groupCurrentDailyIds: { [activeGroupId]: 'ghost-id-that-does-not-exist' },  // 幽靈 ID
             lastUpdateDate: '2024-01-01',
         });
 
@@ -46,8 +69,8 @@ describe('useFavoriteStore — addFavorite', () => {
         const state = useFavoriteStore.getState();
 
         // 幽靈 ID 應被取代
-        expect(state.currentDailyId).not.toBe('ghost-id-that-does-not-exist');
-        expect(state.currentDailyId).toBe(state.favorites[0].id);
+        expect(getCurrentDailyId(useFavoriteStore)).not.toBe('ghost-id-that-does-not-exist');
+        expect(getCurrentDailyId(useFavoriteStore)).toBe(state.favorites[0].id);
     });
 
     it('addFavorite 帶 extra 參數應正確儲存 address, category, placeId', () => {
@@ -89,29 +112,31 @@ describe('useFavoriteStore — removeFavorite', () => {
         const state = useFavoriteStore.getState();
         const aId = state.favorites[0].id;
         const bId = state.favorites[1].id;
+        const activeGroupId = state.activeGroupId;
 
         // currentDailyId 指向 A，刪除 B
-        useFavoriteStore.setState({ currentDailyId: aId });
+        useFavoriteStore.setState({
+            groupCurrentDailyIds: { [activeGroupId]: aId },
+        });
         useFavoriteStore.getState().removeFavorite(bId);
 
-        expect(useFavoriteStore.getState().currentDailyId).toBe(aId);
+        expect(getCurrentDailyId(useFavoriteStore)).toBe(aId);
     });
 
     it('當 currentDailyId 是幽靈 ID，removeFavorite 應清除幽靈 ID', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
+        const activeGroupId = useFavoriteStore.getState().activeGroupId;
 
         useFavoriteStore.setState({
-            favorites: [{ id: 'real-1', name: '天天火鍋', createdAt: new Date().toISOString() }],
-            queue: ['real-1'],
-            currentDailyId: 'ghost-999',   // 幽靈 ID，不在 queue 中
+            favorites: [{ id: 'real-1', name: '天天火鍋', groupId: activeGroupId, createdAt: new Date().toISOString() }],
+            groupQueues: { [activeGroupId]: ['real-1'] },
+            groupCurrentDailyIds: { [activeGroupId]: 'ghost-999' },   // 幽靈 ID，不在 queue 中
             lastUpdateDate: '2024-01-01',
         });
 
         // 刪除 real-1，觸發 removeFavorite
         useFavoriteStore.getState().removeFavorite('real-1');
-        const state = useFavoriteStore.getState();
-
-        expect(state.currentDailyId).toBeNull(); // queue 清空後應為 null
+        expect(getCurrentDailyId(useFavoriteStore)).toBeNull(); // queue 清空後應為 null
     });
 
     it('刪除 currentDailyId 指向的餐廳，應推進到下一個', () => {
@@ -124,30 +149,33 @@ describe('useFavoriteStore — removeFavorite', () => {
         const state = useFavoriteStore.getState();
         const aId = state.favorites[0].id;
         const bId = state.favorites[1].id;
+        const activeGroupId = state.activeGroupId;
 
-        useFavoriteStore.setState({ currentDailyId: aId });
+        useFavoriteStore.setState({
+            groupCurrentDailyIds: { [activeGroupId]: aId },
+        });
         useFavoriteStore.getState().removeFavorite(aId);
 
-        expect(useFavoriteStore.getState().currentDailyId).toBe(bId);
+        expect(getCurrentDailyId(useFavoriteStore)).toBe(bId);
     });
 });
 
 describe('useFavoriteStore — checkDaily', () => {
     it('跨日時，若 currentDailyId 是幽靈 ID，應重置為 queue[0]', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
+        const activeGroupId = useFavoriteStore.getState().activeGroupId;
 
         useFavoriteStore.setState({
-            favorites: [{ id: 'real-1', name: '老王', createdAt: new Date().toISOString() }],
-            queue: ['real-1'],
-            currentDailyId: 'ghost-abc',  // 幽靈 ID
+            favorites: [{ id: 'real-1', name: '老王', groupId: activeGroupId, createdAt: new Date().toISOString() }],
+            groupQueues: { [activeGroupId]: ['real-1'] },
+            groupCurrentDailyIds: { [activeGroupId]: 'ghost-abc' },  // 幽靈 ID
             lastUpdateDate: '2020-01-01', // 舊日期，確保觸發跨日邏輯
         });
 
         useFavoriteStore.getState().checkDaily();
-        const state = useFavoriteStore.getState();
 
         // checkDaily 清理孤兒後，currentDailyId 應為合法 ID
-        expect(state.currentDailyId).toBe('real-1');
+        expect(getCurrentDailyId(useFavoriteStore)).toBe('real-1');
     });
 });
 
@@ -168,7 +196,6 @@ describe('useFavoriteStore — updateFavoriteName', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
         useFavoriteStore.getState().addFavorite('老店');
         const id = useFavoriteStore.getState().favorites[0].id;
-        const beforeUpdate = useFavoriteStore.getState().favorites[0].updatedAt;
 
         // 等一小段時間確保 Date.now() 不同
         useFavoriteStore.getState().updateFavoriteName(id, '新店名');
@@ -191,9 +218,8 @@ describe('useFavoriteStore — reorderQueue', () => {
 
         // 反轉順序
         useFavoriteStore.getState().reorderQueue([cId, bId, aId]);
-        const newState = useFavoriteStore.getState();
 
-        expect(newState.queue).toEqual([cId, bId, aId]);
+        expect(getQueue(useFavoriteStore)).toEqual([cId, bId, aId]);
     });
 
     it('重排後 currentDailyId 若仍在 queue 中應保持不變', () => {
@@ -201,14 +227,14 @@ describe('useFavoriteStore — reorderQueue', () => {
         useFavoriteStore.getState().addFavorite('X');
         useFavoriteStore.getState().addFavorite('Y');
 
-        const state = useFavoriteStore.getState();
-        const currentId = state.currentDailyId;
+        const currentId = getCurrentDailyId(useFavoriteStore);
+        const queue = getQueue(useFavoriteStore);
 
         // 反轉 queue
-        useFavoriteStore.getState().reorderQueue([...state.queue].reverse());
+        useFavoriteStore.getState().reorderQueue([...queue].reverse());
 
         // currentDailyId 仍然指向原本的餐廳
-        expect(useFavoriteStore.getState().currentDailyId).toBe(currentId);
+        expect(getCurrentDailyId(useFavoriteStore)).toBe(currentId);
     });
 
     it('應過濾掉不合法的 ID', () => {
@@ -218,9 +244,8 @@ describe('useFavoriteStore — reorderQueue', () => {
         const id = useFavoriteStore.getState().favorites[0].id;
 
         useFavoriteStore.getState().reorderQueue([id, 'invalid-ghost-id', 'another-fake']);
-        const newState = useFavoriteStore.getState();
 
-        expect(newState.queue).toEqual([id]);
+        expect(getQueue(useFavoriteStore)).toEqual([id]);
     });
 });
 
@@ -270,5 +295,105 @@ describe('useFavoriteStore — findDuplicate', () => {
         const { useFavoriteStore } = require('../store/useFavoriteStore');
         const dup = useFavoriteStore.getState().findDuplicate('任何名字', 'any-place-id');
         expect(dup).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: deleteGroup — tombstone 追蹤
+// ---------------------------------------------------------------------------
+
+describe('useFavoriteStore — deleteGroup tombstone tracking', () => {
+    it('刪除群組後 _deletedGroupIds 應包含 DeletedItemRecord', () => {
+        const { useFavoriteStore } = require('../store/useFavoriteStore');
+
+        // 先建立第二個群組（需至少 2 個才能刪除）
+        const newGroup = useFavoriteStore.getState().createGroup('測試群組');
+        expect(newGroup).not.toBeNull();
+        const groupId = newGroup!.id;
+
+        // 刪除群組
+        const result = useFavoriteStore.getState().deleteGroup(groupId);
+        expect(result).toBe(true);
+
+        const state = useFavoriteStore.getState();
+        expect(state._deletedGroupIds).toHaveLength(1);
+        expect(state._deletedGroupIds[0].id).toBe(groupId);
+        expect(state._deletedGroupIds[0].deletedAt).toBeDefined();
+        // 驗證 deletedAt 是有效的 ISO 8601 時間
+        expect(new Date(state._deletedGroupIds[0].deletedAt).getTime()).toBeGreaterThan(0);
+    });
+
+    it('刪除含有餐廳的群組，_deletedFavoriteIds 也應包含子餐廳的 DeletedItemRecord', () => {
+        const { useFavoriteStore } = require('../store/useFavoriteStore');
+
+        // 建立第二個群組並切換到該群組
+        const newGroup = useFavoriteStore.getState().createGroup('有餐廳的群組');
+        useFavoriteStore.getState().setActiveGroup(newGroup!.id);
+
+        // 在新群組中新增餐廳
+        useFavoriteStore.getState().addFavorite('測試餐廳A');
+        useFavoriteStore.getState().addFavorite('測試餐廳B');
+
+        const favIds = useFavoriteStore.getState().favorites
+            .filter((f: any) => f.groupId === newGroup!.id)
+            .map((f: any) => f.id);
+        expect(favIds).toHaveLength(2);
+
+        // 切回原始群組以避免刪除啟用中群組的邊界條件
+        const originalGroupId = useFavoriteStore.getState().groups[0].id;
+        useFavoriteStore.getState().setActiveGroup(originalGroupId);
+
+        // 刪除含餐廳的群組
+        useFavoriteStore.getState().deleteGroup(newGroup!.id);
+
+        const state = useFavoriteStore.getState();
+        expect(state._deletedGroupIds).toHaveLength(1);
+        expect(state._deletedFavoriteIds).toHaveLength(2);
+        // 驗證每個 DeletedItemRecord 都有正確的 id 和 deletedAt
+        const deletedFavIdSet = new Set(state._deletedFavoriteIds.map((r: any) => r.id));
+        expect(deletedFavIdSet.has(favIds[0])).toBe(true);
+        expect(deletedFavIdSet.has(favIds[1])).toBe(true);
+    });
+
+    it('禁止刪除最後一個群組', () => {
+        const { useFavoriteStore } = require('../store/useFavoriteStore');
+        const state = useFavoriteStore.getState();
+        expect(state.groups).toHaveLength(1);
+
+        const result = useFavoriteStore.getState().deleteGroup(state.groups[0].id);
+        expect(result).toBe(false);
+        expect(useFavoriteStore.getState()._deletedGroupIds).toHaveLength(0);
+    });
+});
+
+describe('useFavoriteStore — removeFavorite tombstone tracking', () => {
+    it('刪除餐廳後 _deletedFavoriteIds 應包含 DeletedItemRecord', () => {
+        const { useFavoriteStore } = require('../store/useFavoriteStore');
+        useFavoriteStore.getState().addFavorite('要刪除的餐廳');
+
+        const favId = useFavoriteStore.getState().favorites[0].id;
+        useFavoriteStore.getState().removeFavorite(favId);
+
+        const state = useFavoriteStore.getState();
+        expect(state._deletedFavoriteIds).toHaveLength(1);
+        expect(state._deletedFavoriteIds[0].id).toBe(favId);
+        expect(state._deletedFavoriteIds[0].deletedAt).toBeDefined();
+        expect(new Date(state._deletedFavoriteIds[0].deletedAt).getTime()).toBeGreaterThan(0);
+    });
+
+    it('連續刪除多個餐廳，_deletedFavoriteIds 應累積', () => {
+        const { useFavoriteStore } = require('../store/useFavoriteStore');
+        useFavoriteStore.getState().addFavorite('餐廳 1');
+        useFavoriteStore.getState().addFavorite('餐廳 2');
+
+        const ids = useFavoriteStore.getState().favorites.map((f: any) => f.id);
+        useFavoriteStore.getState().removeFavorite(ids[0]);
+        useFavoriteStore.getState().removeFavorite(ids[1]);
+
+        const state = useFavoriteStore.getState();
+        expect(state._deletedFavoriteIds).toHaveLength(2);
+        const deletedIds = state._deletedFavoriteIds.map((r: any) => r.id);
+        expect(deletedIds).toContain(ids[0]);
+        expect(deletedIds).toContain(ids[1]);
     });
 });

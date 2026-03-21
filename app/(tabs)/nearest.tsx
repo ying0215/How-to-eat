@@ -12,7 +12,6 @@ import { Link } from 'expo-router';
 import { theme } from '../../src/constants/theme';
 import { useLocation } from '../../src/hooks/useLocation';
 import { useRestaurant } from '../../src/hooks/useRestaurant';
-import { restaurantService } from '../../src/services/restaurant';
 import { RestaurantCard } from '../../src/components/features/RestaurantCard';
 import { FilterModal, FilterOptions } from '../../src/components/features/FilterModal';
 import { Loader } from '../../src/components/common/Loader';
@@ -25,7 +24,7 @@ import { CATEGORY_LABELS } from '../../src/constants/categories';
 
 export default function NearestScreen() {
     const { location } = useLocation();
-    const { restaurants, fetchNearest, loading, error } = useRestaurant();
+    const { restaurants, fetchNearest, refreshNearest, loading, error } = useRestaurant();
     const { jumpToMap } = useMapJump();
     const transportMode = useUserStore((s) => s.transportMode);
 
@@ -101,8 +100,9 @@ export default function NearestScreen() {
 
     // ── ❤️ 加入/移除最愛 ──
     const handleToggleFavorite = useCallback((restaurant: Restaurant) => {
+        const activeGroupId = useFavoriteStore.getState().activeGroupId;
         const existing = favorites.find(
-            (f) => f.name.trim().toLowerCase() === restaurant.name.trim().toLowerCase()
+            (f) => f.groupId === activeGroupId && f.name.trim().toLowerCase() === restaurant.name.trim().toLowerCase()
         );
         if (existing) {
             if (Platform.OS === 'web') {
@@ -154,11 +154,13 @@ export default function NearestScreen() {
         }
     }, [jumpToMap, transportMode]);
 
-    // ── 判斷是否為最愛 ──
+    // ── 判斷是否為最愛（只檢查啟用中群組）──
     const isFavorite = useCallback((restaurant: Restaurant): boolean => {
-        return favorites.some(
-            (f) => f.name.trim().toLowerCase() === restaurant.name.trim().toLowerCase()
-        );
+        return favorites
+            .filter((f) => f.groupId === useFavoriteStore.getState().activeGroupId)
+            .some(
+                (f) => f.name.trim().toLowerCase() === restaurant.name.trim().toLowerCase()
+            );
     }, [favorites]);
 
     const renderEmpty = () => {
@@ -276,8 +278,7 @@ export default function NearestScreen() {
                     refreshing={loading}
                     onRefresh={() => {
                         if (location.latitude && location.longitude) {
-                            restaurantService.clearCache();
-                            fetchNearest({
+                            refreshNearest({
                                 latitude: location.latitude,
                                 longitude: location.longitude,
                                 ...currentFilters,

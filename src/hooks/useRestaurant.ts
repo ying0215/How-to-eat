@@ -26,6 +26,11 @@ export function useRestaurant() {
         }
     }, []);
 
+    const refreshNearest = useCallback(async (params: GetNearestRestaurantsParams) => {
+        restaurantService.clearCache();
+        await fetchNearest(params);
+    }, [fetchNearest]);
+
     const fetchRandom = useCallback(async (params: GetRandomRestaurantParams) => {
         setLoading(true);
         setError(null);
@@ -55,6 +60,7 @@ export function useRestaurant() {
         restaurants,
         currentRandom,
         fetchNearest,
+        refreshNearest,
         fetchRandom,
         clearRandom,
     };
