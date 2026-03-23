@@ -1,0 +1,15 @@
+# 自動化安全性與套件依賴監控
+version: 2
+updates:
+  - package-ecosystem: "npm" 
+    directory: "/" # 監控專案根目錄的 package.json
+    schedule:
+      interval: "weekly" # 每週檢查一次過時套件
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+  - package-ecosystem: "github-actions"
+    directory: "/" # 確保使用的 Action (如 checkout) 都是最新版
+    schedule:
+      interval: "monthly"

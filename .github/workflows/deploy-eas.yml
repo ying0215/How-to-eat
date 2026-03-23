@@ -1,0 +1,45 @@
+name: Deploy Expo (Android / iOS) via EAS
+
+# 這是針對 Native App (APK/AAB/IPA) 的自動化建構腳本
+# 注意：若要啟用，你需要去 GitHub -> Settings -> Secrets and variables -> Actions
+# 新增一個名為 "EXPO_TOKEN" 的 secret，值為從 https://expo.dev/settings/access-tokens 產生的 token
+on:
+  workflow_dispatch: # 先暫時設定為「手動觸發」，以免你不小心推程式碼就把額度用光
+  # 若想要發布 main 分支時也編譯 APK，解除下面註解：
+  # push:
+  #   branches:
+  #     - main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build via EAS
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 取得最新程式碼
+        uses: actions/checkout@v4
+
+      - name: 2. 設定 Node 環境
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 3. 安裝 EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }} # 從 GitHub Secrets 注入
+
+      - name: 4. 安裝專案依賴
+        run: npm ci
+
+      - name: 5. 建構 Android (預設為 production profile)
+        # 如果你只想編譯預覽用 APK，可加上 --profile preview
+        run: eas build --platform android --non-interactive
+
+      # 若需要 iOS，可解除以下註解：
+      # - name: 6. 建構 iOS
+      #   run: eas build --platform ios --non-interactive
