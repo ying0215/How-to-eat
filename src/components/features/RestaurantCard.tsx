@@ -1,5 +1,5 @@
 // ============================================================
-// 🍽️ RestaurantCard.tsx — 通用餐廳卡片元件
+// 🍽️ RestaurantCard.tsx — 通用餐廳卡片元件（動態主題版）
 // ============================================================
 //
 // 依照 PAGE_SPEC.md § 4.3 通用卡片規範。
@@ -30,6 +30,8 @@ import React, { useCallback, useState } from 'react';
 import { Platform, View, Text, StyleSheet, Pressable } from 'react-native';
 import { Card } from '../common/Card';
 import { theme } from '../../constants/theme';
+import type { ThemeColors, ThemeShadows } from '../../constants/theme';
+import { useThemeColors, useThemedStyles } from '../../contexts/ThemeContext';
 import { Restaurant } from '../../types/models';
 import { Ionicons } from '@expo/vector-icons';
 import { formatDistance, formatTimeMins } from '../../utils/helpers';
@@ -67,14 +69,6 @@ interface RestaurantCardProps {
 // ──────────────────────────────────────────────────────────────
 // CardWrapper — 解決 Web 上「<button> 不能嵌套 <button>」的問題
 // ──────────────────────────────────────────────────────────────
-// 問題：外層用 Pressable（Web 渲染為 <button>），內部的
-// ❤️ 和 🗺️ 也是 Pressable（也是 <button>），形成非法嵌套。
-//
-// 方案：
-//   - Web：外層改用 <div>（View），加 onClick + cursor + 按壓
-//     回饋，role="button" 確保無障礙。
-//   - Native：繼續使用 Pressable（原生端沒有 HTML 元素嵌套限制）。
-// ──────────────────────────────────────────────────────────────
 
 interface CardWrapperProps {
     onPress?: () => void;
@@ -86,7 +80,6 @@ const CardWrapper: React.FC<CardWrapperProps> = ({ onPress, accessibilityLabel, 
     const [pressed, setPressed] = useState(false);
 
     if (Platform.OS === 'web') {
-        // Web：使用 View 避免嵌套 <button>
         return (
             <View
                 // @ts-expect-error — RNW 支援 onClick 但型別定義不完整
@@ -106,7 +99,6 @@ const CardWrapper: React.FC<CardWrapperProps> = ({ onPress, accessibilityLabel, 
         );
     }
 
-    // Native：使用 Pressable，沒有 HTML 嵌套限制
     return (
         <Pressable
             style={({ pressed: p }) =>
@@ -132,6 +124,8 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
     onPress,
 }) => {
     const transportMode = useUserStore((s) => s.transportMode);
+    const colors = useThemeColors();
+    const styles = useThemedStyles((c) => createStyles(c));
 
     const handleCardPress = useCallback(() => {
         onPress?.(restaurant);
@@ -180,7 +174,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                                 <Ionicons
                                     name={isFavorite ? 'heart' : 'heart-outline'}
                                     size={22}
-                                    color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
+                                    color={isFavorite ? colors.primary : colors.textSecondary}
                                 />
                             </Pressable>
                         )}
@@ -190,7 +184,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                     <View style={styles.categoryRow}>
                         <Text style={styles.category}>{restaurant.category}</Text>
                         <View style={styles.ratingContainer}>
-                            <Ionicons name="star" size={14} color={theme.colors.star} />
+                            <Ionicons name="star" size={14} color={colors.star} />
                             <Text style={styles.rating}>{restaurant.rating.toFixed(1)}</Text>
                         </View>
                     </View>
@@ -198,13 +192,13 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                     {/* 距離 + 交通時間 */}
                     <View style={styles.detailsRow}>
                         <View style={styles.detailItem}>
-                            <Ionicons name="location-outline" size={14} color={theme.colors.textSecondary} />
+                            <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
                             <Text style={styles.detailText}>
                                 {formatDistance(restaurant.distanceMeter)}
                             </Text>
                         </View>
                         <View style={styles.detailItem}>
-                            <Ionicons name={getTransportIcon(transportMode)} size={14} color={theme.colors.textSecondary} />
+                            <Ionicons name={getTransportIcon(transportMode)} size={14} color={colors.textSecondary} />
                             <Text style={styles.detailText}>約 {formatTimeMins(restaurant.estimatedTimeMins)}</Text>
                         </View>
                     </View>
@@ -229,7 +223,7 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
                                     pressed && { opacity: theme.interaction.pressedOpacity },
                                 ]}
                             >
-                                <Ionicons name="navigate-outline" size={16} color={theme.colors.primary} />
+                                <Ionicons name="navigate-outline" size={16} color={colors.primary} />
                                 <Text style={styles.navigateText}>導航</Text>
                             </Pressable>
                         </View>
@@ -240,127 +234,129 @@ export const RestaurantCard: React.FC<RestaurantCardProps> = ({
     );
 };
 
-// ── Styles ──
+// ── Dynamic Styles Factory ──
 
-const styles = StyleSheet.create({
-    cardContainer: {
-        padding: 0,
-        overflow: 'hidden',
-    },
-    // ── 休息中 Badge（改為內嵌行內樣式）──
-    closedBadge: {
-        backgroundColor: theme.colors.error + 'E6',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: theme.borderRadius.sm,
-    },
-    closedText: {
-        color: theme.colors.onPrimary,
-        ...theme.typography.caption,
-        fontSize: 11,
-        fontWeight: 'bold',
-    },
-    // ── 資訊 ──
-    infoContainer: {
-        padding: theme.spacing.lg,
-    },
-    headerRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: theme.spacing.xs,
-        gap: theme.spacing.sm,
-    },
-    queueBadge: {
-        backgroundColor: theme.colors.primary + '18',
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: theme.borderRadius.sm,
-        marginRight: 4,
-    },
-    queueText: {
-        ...theme.typography.caption,
-        fontWeight: 'bold',
-        color: theme.colors.primary,
-    },
-    name: {
-        ...theme.typography.h3,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-        flex: 1,
-    },
-    // ── 分類 + 評分 ──
-    categoryRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.sm,
-    },
-    category: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.primary,
-    },
-    ratingContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: theme.colors.background,
-        paddingHorizontal: theme.spacing.sm,
-        paddingVertical: 2,
-        borderRadius: theme.borderRadius.sm,
-    },
-    rating: {
-        marginLeft: 4,
-        ...theme.typography.bodySmall,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-    },
-    // ── 詳情列 ──
-    detailsRow: {
-        flexDirection: 'row',
-        marginBottom: theme.spacing.sm,
-        gap: theme.spacing.md,
-    },
-    detailItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    detailText: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-    },
-    // ── 地址 ──
-    address: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-        marginTop: theme.spacing.xs,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border,
-        paddingTop: theme.spacing.sm,
-    },
-    // ── 操作列（Spec § 4.3 底部按鈕）──
-    actionRow: {
-        marginTop: theme.spacing.md,
-        paddingTop: theme.spacing.sm,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border,
-        alignItems: 'center',
-    },
-    navigateButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingVertical: theme.spacing.sm,
-        paddingHorizontal: theme.spacing.lg,
-        borderRadius: theme.borderRadius.md,
-        borderWidth: 1,
-        borderColor: theme.colors.primary,
-    },
-    navigateText: {
-        ...theme.typography.bodySmall,
-        fontSize: 13,
-        fontWeight: '600',
-        color: theme.colors.primary,
-    },
-});
+function createStyles(c: ThemeColors) {
+    return StyleSheet.create({
+        cardContainer: {
+            padding: 0,
+            overflow: 'hidden',
+        },
+        // ── 休息中 Badge ──
+        closedBadge: {
+            backgroundColor: c.error + 'E6',
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: theme.borderRadius.sm,
+        },
+        closedText: {
+            color: c.onPrimary,
+            ...theme.typography.caption,
+            fontSize: 11,
+            fontWeight: 'bold',
+        },
+        // ── 資訊 ──
+        infoContainer: {
+            padding: theme.spacing.lg,
+        },
+        headerRow: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: theme.spacing.xs,
+            gap: theme.spacing.sm,
+        },
+        queueBadge: {
+            backgroundColor: c.primary + '18',
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: theme.borderRadius.sm,
+            marginRight: 4,
+        },
+        queueText: {
+            ...theme.typography.caption,
+            fontWeight: 'bold',
+            color: c.primary,
+        },
+        name: {
+            ...theme.typography.h3,
+            fontWeight: 'bold',
+            color: c.text,
+            flex: 1,
+        },
+        // ── 分類 + 評分 ──
+        categoryRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.sm,
+            marginBottom: theme.spacing.sm,
+        },
+        category: {
+            ...theme.typography.bodySmall,
+            color: c.primary,
+        },
+        ratingContainer: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: c.background,
+            paddingHorizontal: theme.spacing.sm,
+            paddingVertical: 2,
+            borderRadius: theme.borderRadius.sm,
+        },
+        rating: {
+            marginLeft: 4,
+            ...theme.typography.bodySmall,
+            fontWeight: 'bold',
+            color: c.text,
+        },
+        // ── 詳情列 ──
+        detailsRow: {
+            flexDirection: 'row',
+            marginBottom: theme.spacing.sm,
+            gap: theme.spacing.md,
+        },
+        detailItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+        },
+        detailText: {
+            ...theme.typography.caption,
+            color: c.textSecondary,
+        },
+        // ── 地址 ──
+        address: {
+            ...theme.typography.caption,
+            color: c.textSecondary,
+            marginTop: theme.spacing.xs,
+            borderTopWidth: 1,
+            borderTopColor: c.border,
+            paddingTop: theme.spacing.sm,
+        },
+        // ── 操作列 ──
+        actionRow: {
+            marginTop: theme.spacing.md,
+            paddingTop: theme.spacing.sm,
+            borderTopWidth: 1,
+            borderTopColor: c.border,
+            alignItems: 'center',
+        },
+        navigateButton: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            paddingVertical: theme.spacing.sm,
+            paddingHorizontal: theme.spacing.lg,
+            borderRadius: theme.borderRadius.md,
+            borderWidth: 1,
+            borderColor: c.primary,
+        },
+        navigateText: {
+            ...theme.typography.bodySmall,
+            fontSize: 13,
+            fontWeight: '600',
+            color: c.primary,
+        },
+    });
+}

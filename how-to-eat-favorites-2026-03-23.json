@@ -1,0 +1,252 @@
+{
+  "_exportVersion": 1,
+  "_exportedAt": "2026-03-23T11:10:49.524Z",
+  "favorites": [
+    {
+      "id": "mmyw0nc9-1-14c7ed4d792401a4",
+      "name": "臺灣陽春拉麵",
+      "note": "拉麵店",
+      "address": "正忠路428-8號",
+      "category": "拉麵店",
+      "placeId": "ChIJy2MxZ0EFbjQRjZ07-_ApMfw",
+      "createdAt": "2026-03-20T12:40:49.449Z",
+      "updatedAt": "2026-03-20T12:40:49.449Z"
+    },
+    {
+      "id": "mmyw0tye-2-729fc846ea27cee6",
+      "name": "九九食堂",
+      "note": "拉麵店",
+      "address": "大昌二路567號",
+      "category": "拉麵店",
+      "placeId": "ChIJ87SuZtgEbjQRGYKC2ZpmMM4",
+      "createdAt": "2026-03-20T12:40:58.022Z",
+      "updatedAt": "2026-03-20T12:40:58.022Z"
+    },
+    {
+      "id": "mmyw0x0t-3-8dfe1a7432eb984a",
+      "name": "沐瀧家拉麵屋 義華店",
+      "note": "拉麵店",
+      "address": "義華路294號",
+      "category": "拉麵店",
+      "placeId": "ChIJMwh1R5AFbjQRUbUX_8_MSEk",
+      "createdAt": "2026-03-20T12:41:01.997Z",
+      "updatedAt": "2026-03-20T12:41:01.997Z"
+    },
+    {
+      "id": "mmyw10o9-4-dca1e7683923b304",
+      "name": "貳水Aqua²拉麵の專賣店",
+      "note": "拉麵店",
+      "address": "建工路300號",
+      "category": "拉麵店",
+      "placeId": "ChIJExHxtlUFbjQR4oJ7-HS_nYk",
+      "createdAt": "2026-03-20T12:41:06.729Z",
+      "updatedAt": "2026-03-20T12:41:06.729Z"
+    },
+    {
+      "id": "mmyw1c0k-5-317b3f68512c8326",
+      "name": "Q Burger 高雄大昌店",
+      "note": "早午餐餐廳",
+      "address": "大昌二路522號",
+      "category": "早午餐餐廳",
+      "placeId": "ChIJZTQg-xIFbjQR4WgoR4qQ-ww",
+      "createdAt": "2026-03-20T12:41:21.428Z",
+      "updatedAt": "2026-03-20T12:41:21.428Z"
+    },
+    {
+      "id": "mmyw1gt3-6-1806f42e69479496",
+      "name": "胖達鍋燒很燒 高雄建工店",
+      "note": "早午餐餐廳",
+      "address": "建工路426號",
+      "category": "早午餐餐廳",
+      "placeId": "ChIJRydZfAsFbjQRa581y44Mv7k",
+      "createdAt": "2026-03-20T12:41:27.639Z",
+      "updatedAt": "2026-03-20T12:41:27.639Z"
+    },
+    {
+      "id": "mmywc69s-0-10fd02800b0afc2f",
+      "name": "嘎李泛1",
+      "createdAt": "2026-03-20T12:49:47.200Z",
+      "updatedAt": "2026-03-20T12:49:47.200Z"
+    },
+    {
+      "id": "mmywcfex-1-2813542cb406bbb7",
+      "name": "咖發聽2",
+      "createdAt": "2026-03-20T12:49:59.049Z",
+      "updatedAt": "2026-03-20T12:49:59.049Z"
+    },
+    {
+      "id": "mmypc6om-0-ceda73ef36de88b6",
+      "name": "灰熊咖哩建工店",
+      "address": "建工路379號",
+      "category": "餐廳",
+      "placeId": "ChIJhda3ddgEbjQRIx1-NGumZPU",
+      "latitude": 22.6525026,
+      "longitude": 120.33022729999999,
+      "createdAt": "2026-03-20T09:33:50.422Z",
+      "updatedAt": "2026-03-20T09:33:50.422Z"
+    },
+    {
+      "id": "mmyw1lcm-7-e74fcd9068006e03",
+      "name": "A-bao",
+      "note": "早午餐餐廳",
+      "address": "建工路398號",
+      "category": "早午餐餐廳",
+      "placeId": "ChIJGWIoLAIFbjQR2pEPjenWA9o",
+      "createdAt": "2026-03-20T12:41:33.526Z",
+      "updatedAt": "2026-03-20T12:41:33.526Z"
+    },
+    {
+      "id": "mmyw1nwq-8-826e6afea922d890",
+      "name": "茉爾漢堡",
+      "note": "早午餐餐廳",
+      "address": "本和街1號1 樓",
+      "category": "早午餐餐廳",
+      "placeId": "ChIJ6YZCnEoFbjQR_j4kvLUfRVY",
+      "createdAt": "2026-03-20T12:41:36.842Z",
+      "updatedAt": "2026-03-20T12:41:36.842Z"
+    },
+    {
+      "id": "mmywg4g6-1-c2c880d9f6a13c65",
+      "name": "菁姐手作蛋餅",
+      "note": "早午餐",
+      "address": "大豐二路147號",
+      "category": "早午餐",
+      "placeId": "ChIJDSLZSdoEbjQR3hefKusGSas",
+      "createdAt": "2026-03-20T12:52:51.462Z",
+      "updatedAt": "2026-03-20T12:52:51.462Z"
+    },
+    {
+      "id": "mmywg9ld-3-a3132ca193e0f2b7",
+      "name": "餓不休早午餐",
+      "note": "早午餐",
+      "address": "大豐二路170號",
+      "category": "早午餐",
+      "placeId": "ChIJCRwA1PMFbjQRcciaVfllPv0",
+      "createdAt": "2026-03-20T12:52:58.129Z",
+      "updatedAt": "2026-03-20T12:52:58.129Z"
+    },
+    {
+      "id": "mmyxuwfi-1-e6ea01345bdab950",
+      "name": "嘉義真好吃火雞肉飯",
+      "address": "正忠路232號",
+      "category": "中式餐廳",
+      "placeId": "ChIJky8YFO8FbjQR0CQ1rA2doRk",
+      "latitude": 22.6462766,
+      "longitude": 120.33022310000001,
+      "createdAt": "2026-03-20T13:32:20.526Z",
+      "updatedAt": "2026-03-20T13:32:20.526Z"
+    },
+    {
+      "id": "mmyxl44l-0-3c1a5994f97d2419",
+      "name": "嘉義真好吃火雞肉飯",
+      "address": "正忠路232號",
+      "category": "中式餐廳",
+      "placeId": "ChIJky8YFO8FbjQR0CQ1rA2doRk",
+      "latitude": 22.6462766,
+      "longitude": 120.33022310000001,
+      "createdAt": "2026-03-20T13:24:43.941Z",
+      "updatedAt": "2026-03-20T13:24:43.941Z"
+    },
+    {
+      "id": "mmypjh3h-2-bfc4b5648068a221",
+      "name": "銅一鍋",
+      "address": "建工路470號",
+      "category": "韓國餐廳",
+      "placeId": "ChIJ1xry2tgEbjQR74g0tgLZRwk",
+      "latitude": 22.651396599999998,
+      "longitude": 120.3270847,
+      "createdAt": "2026-03-20T09:39:30.509Z",
+      "updatedAt": "2026-03-20T09:39:30.509Z"
+    },
+    {
+      "id": "mmyvzsi9-0-5cd4b6e3f2d65e00",
+      "name": "HWC 黑沃咖啡 | 高雄正忠店",
+      "note": "咖啡廳",
+      "address": "正忠路228-1號",
+      "category": "咖啡廳",
+      "placeId": "ChIJ4Uhjd1MFbjQRGdyBdk_JEd4",
+      "createdAt": "2026-03-20T12:40:09.490Z",
+      "updatedAt": "2026-03-20T12:40:09.490Z"
+    },
+    {
+      "id": "mmyy1qy0-2-16c73253f19a7454",
+      "name": "喜得炭火燒三明治-高雄正忠店",
+      "address": "正忠路332號1樓",
+      "category": "早午餐",
+      "placeId": "ChIJF2CAaE0FbjQRumiD6EEgL4U",
+      "latitude": 22.647517,
+      "longitude": 120.33033650000002,
+      "createdAt": "2026-03-20T13:37:40.008Z",
+      "updatedAt": "2026-03-20T13:37:40.008Z"
+    },
+    {
+      "id": "mmyy8gr5-3-364db4b695706f6e",
+      "name": "早到晚到大昌旗艦店",
+      "address": "大昌二路487號",
+      "category": "飯類",
+      "placeId": "ChIJ-fAe_HkdbjQRCj4-stQUoDk",
+      "latitude": 22.6505933,
+      "longitude": 120.3312121,
+      "createdAt": "2026-03-20T13:42:53.393Z",
+      "updatedAt": "2026-03-20T13:42:53.393Z"
+    },
+    {
+      "id": "mn0bor0h-2-e93b55ca6f0a1636",
+      "name": "十一火烤兩吃",
+      "note": "火鍋店",
+      "address": "正忠路232之1號",
+      "category": "火鍋店",
+      "placeId": "ChIJCZoQWdoEbjQR3hDw6kUN0r8",
+      "groupId": "mn060o2j-5-46aa17cde3f4a108",
+      "createdAt": "2026-03-21T12:47:14.369Z",
+      "updatedAt": "2026-03-21T12:47:14.369Z"
+    },
+    {
+      "id": "mn0bowy8-3-708e1100c9e8d5f5",
+      "name": "不思義-義式廚房",
+      "note": "義大利餐廳",
+      "address": "正忠路348號",
+      "category": "義大利餐廳",
+      "placeId": "ChIJiUvLaNgEbjQRsnbKBEVLdjk",
+      "groupId": "mn06e178-1-0d83c46dd9b60ef5",
+      "createdAt": "2026-03-21T12:47:22.064Z",
+      "updatedAt": "2026-03-21T12:47:22.064Z"
+    }
+  ],
+  "groups": [
+    {
+      "id": "mn060o2j-5-46aa17cde3f4a108",
+      "name": "群組A",
+      "createdAt": "2026-03-21T10:08:32.731Z",
+      "updatedAt": "2026-03-21T10:08:32.731Z"
+    },
+    {
+      "id": "mn06e178-1-0d83c46dd9b60ef5",
+      "name": "群組1",
+      "createdAt": "2026-03-21T10:18:56.276Z",
+      "updatedAt": "2026-03-23T05:48:31.564Z"
+    },
+    {
+      "id": "mn2rhnt7-1-36054912411ca9ba",
+      "name": "群組C",
+      "createdAt": "2026-03-23T05:45:09.834Z",
+      "updatedAt": "2026-03-23T05:45:09.834Z"
+    }
+  ],
+  "activeGroupId": "mn06e178-1-0d83c46dd9b60ef5",
+  "groupQueues": {
+    "mn060o2j-5-46aa17cde3f4a108": [
+      "mn0bor0h-2-e93b55ca6f0a1636"
+    ],
+    "mn06e178-1-0d83c46dd9b60ef5": [
+      "mn0bowy8-3-708e1100c9e8d5f5"
+    ],
+    "mn2rhnt7-1-36054912411ca9ba": []
+  },
+  "groupCurrentDailyIds": {
+    "mn060o2j-5-46aa17cde3f4a108": "mn0bor0h-2-e93b55ca6f0a1636",
+    "mn06e178-1-0d83c46dd9b60ef5": "mn0bowy8-3-708e1100c9e8d5f5",
+    "mn2rhnt7-1-36054912411ca9ba": null
+  },
+  "lastUpdateDate": "2026-03-23"
+}

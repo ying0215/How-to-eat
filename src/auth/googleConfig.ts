@@ -91,6 +91,12 @@ export const isExpoGo: boolean = detectIsExpoGo();
 // Android 類型 → EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID
 //   - 不需要 client_secret（靠 package name + SHA-1 簽名指紋驗證身份）
 //   - 在 Google Cloud Console 建立時填入 package name 與 SHA-1
+//
+// ⚠️ 2023/10 政策變更：Google 禁止 Android OAuth Client 使用自訂 URI scheme
+//    (如 mobile://) 作為 redirect_uri（Secure Response Handling 政策）。
+//    因此 Android 平台改用 Web Application Client ID + client_secret，
+//    搭配 PKCE 保護授權碼交換，安全性等同。
+//    需在 Google Cloud Console → Web Client → Authorized redirect URIs 加入 mobile://
 // ---------------------------------------------------------------------------
 
 /** Web 平台用的 OAuth Client ID（Web Application 類型） */
@@ -109,8 +115,13 @@ const IOS_CLIENT_ID: string =
  * 根據當前平台自動選擇對應的 Google OAuth Client ID。
  *
  * - Web → Web Application Client ID
- * - Android → Android Client ID
+ * - Android → Web Application Client ID（Google 禁止 Android Client 使用 custom scheme redirect）
  * - iOS → 目前 fallback 到 Web Client ID（未來可擴充）
+ *
+ * ⚠️ Android 為何不用 Android Client ID？
+ *    Google 自 2023/10 起禁止 Android OAuth Client 使用自訂 URI scheme（如 mobile://）
+ *    作為 redirect_uri，違反 Secure Response Handling 政策。
+ *    改用 Web Client ID + client_secret + PKCE，redirect_uri 仍可為 mobile://。
  *
  * Expo 慣例：以 EXPO_PUBLIC_ 前綴的環境變數會被自動注入到 client bundle 中。
  * 若未設定，googleClientId 為空字串，useGoogleAuth 會在初始化時偵測並跳過登入流程。
@@ -118,7 +129,8 @@ const IOS_CLIENT_ID: string =
 function selectClientId(): string {
     switch (CURRENT_PLATFORM) {
         case 'android':
-            return ANDROID_CLIENT_ID || WEB_CLIENT_ID;  // fallback to Web if Android not set
+            // ⚠️ 使用 Web Client ID（非 Android Client ID），繞過 custom scheme 禁令
+            return WEB_CLIENT_ID;
         case 'ios':
             return IOS_CLIENT_ID || WEB_CLIENT_ID;      // fallback to Web if iOS not set
         case 'web':
@@ -129,20 +141,23 @@ function selectClientId(): string {
 export const googleClientId: string = selectClientId();
 
 /**
- * Google OAuth Client Secret（僅 Web Application 類型需要）。
+ * Google OAuth Client Secret（Web Application 類型需要）。
  *
- * ⚠️ Android 類型的 OAuth Client 不需要 client_secret：
- *    Android 靠 package name + SHA-1 signing certificate 驗證應用身份，
- *    因此在 Android 平台上 client_secret 為空字串。
+ * ⚠️ Android 現在也使用 Web Client ID（因 custom scheme 禁令），
+ *    因此 Android 也需要提供 client_secret。
  *
- * ⚠️ 在正式生產環境中，Web 的 client_secret 應由後端 proxy 持有，不暴露在前端。
+ * ⚠️ iOS 若使用原生 iOS OAuth Client，則不需要 client_secret。
+ *
+ * ⚠️ 在正式生產環境中，client_secret 應由後端 proxy 持有，不暴露在前端。
  * 目前開發階段直接使用，因權限範圍僅限 drive.appdata，風險可控。
  */
 function selectClientSecret(): string {
     switch (CURRENT_PLATFORM) {
         case 'android':
+            // Android 使用 Web Client ID，需要 client_secret 進行 token exchange
+            return process.env.EXPO_PUBLIC_GOOGLE_CLIENT_SECRET ?? '';
         case 'ios':
-            return '';  // Native OAuth Client 不需要 client_secret
+            return '';  // iOS 原生 OAuth Client 不需要 client_secret
         case 'web':
         default:
             return process.env.EXPO_PUBLIC_GOOGLE_CLIENT_SECRET ?? '';

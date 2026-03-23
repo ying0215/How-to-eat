@@ -10,6 +10,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, Alert, Platform, TextInput, ScrollView } from 'react-native';
 import { Link } from 'expo-router';
 import { theme } from '../../src/constants/theme';
+import type { ThemeColors, ThemeShadows } from '../../src/constants/theme';
+import { useThemeColors, useThemeShadows, useThemedStyles, useResolvedThemeMode } from '../../src/contexts/ThemeContext';
 import { useLocation } from '../../src/hooks/useLocation';
 import { useRestaurant } from '../../src/hooks/useRestaurant';
 import { RestaurantCard } from '../../src/components/features/RestaurantCard';
@@ -38,6 +40,11 @@ export default function NearestScreen() {
     const [searchText, setSearchText] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
+    // ── 動態主題 ──
+    const colors = useThemeColors();
+    const shadows = useThemeShadows();
+    const resolvedMode = useResolvedThemeMode();
+    const styles = useThemedStyles((c, s) => createNearestStyles(c, s));
 
     // ── 防止重複呼叫的 Refs ──
     const hasInitialFetched = useRef(false);
@@ -62,7 +69,6 @@ export default function NearestScreen() {
 
     // ── Effect 2：篩選條件變更 → 重新搜尋（必須已有位置）──
     useEffect(() => {
-        // 首次定位由 Effect 1 處理，避免重複
         if (!hasInitialFetched.current) return;
         if (!location.latitude || !location.longitude) return;
 
@@ -77,11 +83,10 @@ export default function NearestScreen() {
 
     const handleApplyFilters = (filters: FilterOptions) => {
         setCurrentFilters(filters);
-        // 同步分類選擇狀態
         setSelectedCategory(filters.category || null);
     };
 
-    // ── Chip 點擊處理：更新篩選條件並重新查詢 ──
+    // ── Chip 點擊處理 ──
     const handleCategoryChip = useCallback((cat: string) => {
         const newCat = cat === '全部' ? null : cat;
         setSelectedCategory(newCat);
@@ -118,7 +123,7 @@ export default function NearestScreen() {
             addFavorite(restaurant.name, restaurant.category, {
                 address: restaurant.address,
                 category: restaurant.category,
-                placeId: restaurant.id, // Google Places ID
+                placeId: restaurant.id,
             });
             if (Platform.OS === 'web') {
                 window.alert(`✅「${restaurant.name}」已加入你的最愛清單`);
@@ -154,7 +159,7 @@ export default function NearestScreen() {
         }
     }, [jumpToMap, transportMode]);
 
-    // ── 判斷是否為最愛（只檢查啟用中群組）──
+    // ── 判斷是否為最愛 ──
     const isFavorite = useCallback((restaurant: Restaurant): boolean => {
         return favorites
             .filter((f) => f.groupId === useFavoriteStore.getState().activeGroupId)
@@ -167,7 +172,7 @@ export default function NearestScreen() {
         if (loading) return null;
         return (
             <View style={styles.emptyContainer}>
-                <Ionicons name="restaurant-outline" size={48} color={theme.colors.border} />
+                <Ionicons name="restaurant-outline" size={48} color={colors.border} />
                 <Text style={styles.emptyText}>附近沒有符合條件的餐廳喔</Text>
             </View>
         );
@@ -175,13 +180,13 @@ export default function NearestScreen() {
 
     return (
         <View style={styles.screenContainer}>
-            {/* ── 自訂 Header（與 menu / favorites / settings 統一 3 欄式版面）── */}
+            {/* ── 自訂 Header ── */}
             <View style={styles.customHeader}>
                 <Link href="/" asChild>
                     <Pressable style={styles.backButton}>
                         {({ pressed }) => (
                             <View style={[styles.backButtonInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                                <Ionicons name="arrow-back-outline" size={20} color={theme.colors.primary} />
+                                <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
                                 <Text style={styles.backText}>返回</Text>
                             </View>
                         )}
@@ -192,15 +197,15 @@ export default function NearestScreen() {
             </View>
             <View style={styles.divider} />
 
-            {/* ── 搜尋列 + 篩選按鈕（Spec § P3 主要 UI 區塊）── */}
+            {/* ── 搜尋列 + 篩選按鈕 ── */}
             <View style={styles.header}>
                 <View style={styles.searchRow}>
                     <View style={styles.searchInputContainer}>
-                        <Ionicons name="search-outline" size={18} color={theme.colors.textSecondary} style={styles.searchIcon} />
+                        <Ionicons name="search-outline" size={18} color={colors.textSecondary} style={styles.searchIcon} />
                         <TextInput
                             style={styles.searchInput}
                             placeholder="搜尋餐廳名稱..."
-                            placeholderTextColor={theme.colors.textSecondary}
+                            placeholderTextColor={colors.textSecondary}
                             value={searchText}
                             onChangeText={setSearchText}
                             returnKeyType="search"
@@ -212,7 +217,7 @@ export default function NearestScreen() {
                                 hitSlop={8}
                                 accessibilityLabel="清除搜尋"
                             >
-                                <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
+                                <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
                             </Pressable>
                         )}
                     </View>
@@ -222,11 +227,11 @@ export default function NearestScreen() {
                         accessibilityRole="button"
                         accessibilityLabel="開啟篩選條件"
                     >
-                        <Ionicons name="options-outline" size={22} color={theme.colors.primary} />
+                        <Ionicons name="options-outline" size={22} color={colors.primary} />
                     </Pressable>
                 </View>
 
-                {/* ── 分類標籤橫向滑動（Spec: 分類標籤橫向滑動）── */}
+                {/* ── 分類標籤橫向滑動 ── */}
                 <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -299,141 +304,143 @@ export default function NearestScreen() {
     );
 }
 
-const styles = StyleSheet.create({
-    screenContainer: {
-        flex: 1,
-        backgroundColor: theme.colors.background,
-        paddingTop: Platform.OS === 'web' ? 16 : 52,
-    },
-    // ── 自訂 Header（與 menu / favorites / settings 統一風格）──
-    customHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: theme.spacing.md,
-        paddingBottom: theme.spacing.md,
-    },
-    customHeaderTitle: {
-        ...theme.typography.h2,
-        color: theme.colors.text,
-    },
-    backButton: {
-        width: 80,
-    },
-    backButtonInner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-    },
-    backText: {
-        ...theme.typography.body,
-        color: theme.colors.primary,
-        fontWeight: '500',
-    },
-    headerSpacer: {
-        width: 80,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: theme.colors.border,
-        marginHorizontal: theme.spacing.md,
-        marginBottom: theme.spacing.sm + 4,
-    },
-    header: {
-        padding: theme.spacing.lg,
-        paddingBottom: theme.spacing.sm,
-    },
-    // ── 搜尋列 ──
-    searchRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.sm,
-    },
-    searchInputContainer: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.borderRadius.md,
-        paddingHorizontal: theme.spacing.md,
-        height: 40,
-        ...theme.shadows.sm,
-    },
-    searchIcon: {
-        marginRight: theme.spacing.sm,
-    },
-    searchInput: {
-        flex: 1,
-        ...theme.typography.bodySmall,
-        color: theme.colors.text,
-        padding: 0,
-    },
-    // ── 分類 Chip ──
-    chipScroll: {
-        marginBottom: theme.spacing.xs,
-    },
-    chipScrollContent: {
-        flexDirection: 'row',
-        flexWrap: 'nowrap',
-        gap: theme.spacing.sm,
-        paddingRight: theme.spacing.md,
-    },
-    chip: {
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: theme.spacing.sm - 2,
-        borderRadius: theme.borderRadius.full,
-        backgroundColor: theme.colors.surface,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-    },
-    chipActive: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
-    },
-    chipText: {
-        ...theme.typography.caption,
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-    },
-    chipTextActive: {
-        color: theme.colors.onPrimary,
-        fontWeight: 'bold',
-    },
-    // ── 其他 ──
-    title: {
-        ...theme.typography.h1,
-        marginBottom: theme.spacing.xs,
-        color: theme.colors.text
-    },
-    locationText: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary
-    },
-    filterButton: {
-        padding: theme.spacing.sm,
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.borderRadius.full,
-        ...theme.shadows.sm,
-    },
-    listContainer: {
-        padding: theme.spacing.lg,
-        paddingTop: 0,
-    },
-    emptyContainer: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 100,
-    },
-    emptyText: {
-        marginTop: theme.spacing.md,
-        color: theme.colors.textSecondary,
-        ...theme.typography.body,
-    },
-    errorText: {
-        margin: theme.spacing.lg,
-        color: theme.colors.error,
-        textAlign: 'center',
-    }
-});
+function createNearestStyles(c: ThemeColors, s: ThemeShadows) {
+    return StyleSheet.create({
+        screenContainer: {
+            flex: 1,
+            backgroundColor: c.background,
+            paddingTop: Platform.OS === 'web' ? 16 : 52,
+        },
+        // ── 自訂 Header ──
+        customHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingHorizontal: theme.spacing.md,
+            paddingBottom: theme.spacing.md,
+        },
+        customHeaderTitle: {
+            ...theme.typography.h2,
+            color: c.text,
+        },
+        backButton: {
+            width: 80,
+        },
+        backButtonInner: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.xs,
+        },
+        backText: {
+            ...theme.typography.body,
+            color: c.primary,
+            fontWeight: '500',
+        },
+        headerSpacer: {
+            width: 80,
+        },
+        divider: {
+            height: 1,
+            backgroundColor: c.border,
+            marginHorizontal: theme.spacing.md,
+            marginBottom: theme.spacing.sm + 4,
+        },
+        header: {
+            padding: theme.spacing.lg,
+            paddingBottom: theme.spacing.sm,
+        },
+        // ── 搜尋列 ──
+        searchRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.sm,
+            marginBottom: theme.spacing.sm,
+        },
+        searchInputContainer: {
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: c.surface,
+            borderRadius: theme.borderRadius.md,
+            paddingHorizontal: theme.spacing.md,
+            height: 40,
+            ...s.sm,
+        },
+        searchIcon: {
+            marginRight: theme.spacing.sm,
+        },
+        searchInput: {
+            flex: 1,
+            ...theme.typography.bodySmall,
+            color: c.text,
+            padding: 0,
+        },
+        // ── 分類 Chip ──
+        chipScroll: {
+            marginBottom: theme.spacing.xs,
+        },
+        chipScrollContent: {
+            flexDirection: 'row',
+            flexWrap: 'nowrap',
+            gap: theme.spacing.sm,
+            paddingRight: theme.spacing.md,
+        },
+        chip: {
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: theme.spacing.sm - 2,
+            borderRadius: theme.borderRadius.full,
+            backgroundColor: c.surface,
+            borderWidth: 1,
+            borderColor: c.border,
+        },
+        chipActive: {
+            backgroundColor: c.primary,
+            borderColor: c.primary,
+        },
+        chipText: {
+            ...theme.typography.caption,
+            fontSize: 13,
+            color: c.textSecondary,
+        },
+        chipTextActive: {
+            color: c.onPrimary,
+            fontWeight: 'bold',
+        },
+        // ── 其他 ──
+        title: {
+            ...theme.typography.h1,
+            marginBottom: theme.spacing.xs,
+            color: c.text,
+        },
+        locationText: {
+            ...theme.typography.caption,
+            color: c.textSecondary,
+        },
+        filterButton: {
+            padding: theme.spacing.sm,
+            backgroundColor: c.surface,
+            borderRadius: theme.borderRadius.full,
+            ...s.sm,
+        },
+        listContainer: {
+            padding: theme.spacing.lg,
+            paddingTop: 0,
+        },
+        emptyContainer: {
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginTop: 100,
+        },
+        emptyText: {
+            marginTop: theme.spacing.md,
+            color: c.textSecondary,
+            ...theme.typography.body,
+        },
+        errorText: {
+            margin: theme.spacing.lg,
+            color: c.error,
+            textAlign: 'center',
+        },
+    });
+}

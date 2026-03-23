@@ -122,10 +122,52 @@ export function mergeStates(
 ): SyncableFavoriteState {
     const now = new Date().toISOString();
 
+    // ── 0. 向後相容（舊版雲端資料遷移） ──
+    // 如果遠端資料為舊版（無 groups），將其暫時掛載至本地的活躍群組，以便能與本地資料正確合併
+    let remoteToMerge = remote;
+    const isLegacyRemote = !remote.groups || remote.groups.length === 0;
+
+    if (isLegacyRemote && Array.isArray(remote.favorites)) {
+        // 優先使用本地目前的 activeGroupId，若無則使用 local.groups[0]
+        let targetGroupId = local.activeGroupId;
+        if (!targetGroupId && local.groups && local.groups.length > 0) {
+            targetGroupId = local.groups[0].id;
+        }
+
+        if (targetGroupId) {
+            console.info(`[mergeStrategy] 偵測到舊版遠端資料，將記錄遷移至本地群組: ${targetGroupId}`);
+            const migratedFavorites = remote.favorites.map((f) => ({
+                ...f,
+                groupId: f.groupId ?? targetGroupId,
+            }));
+
+            const migratedQueues = { ...(remote.groupQueues ?? {}) };
+            if (remote.queue && Array.isArray(remote.queue)) {
+                migratedQueues[targetGroupId] = remote.queue;
+            }
+
+            const migratedCurrentIds = { ...(remote.groupCurrentDailyIds ?? {}) };
+            if (remote.currentDailyId !== undefined) {
+                migratedCurrentIds[targetGroupId] = remote.currentDailyId;
+            }
+
+            remoteToMerge = {
+                ...remote,
+                favorites: migratedFavorites,
+                groups: [], // 遠端無 group 資訊，空陣列讓 LWW 保留本地 group
+                groupQueues: migratedQueues,
+                groupCurrentDailyIds: migratedCurrentIds,
+            };
+        }
+    }
+
+    // 後續邏輯使用 remoteToMerge
+    const actualRemote = remoteToMerge;
+
     // ── 1. 合併 Favorites（per-item LWW） ──
     const allFavIds = new Set<string>([
         ...local.favorites.map((f) => f.id),
-        ...remote.favorites.map((f) => f.id),
+        ...actualRemote.favorites.map((f) => f.id),
     ]);
 
     const mergedFavorites: SyncableFavorite[] = [];
@@ -133,7 +175,7 @@ export function mergeStates(
 
     for (const id of allFavIds) {
         const localItem = local.favorites.find((f) => f.id === id);
-        const remoteItem = remote.favorites.find((f) => f.id === id);
+        const remoteItem = actualRemote.favorites.find((f) => f.id === id);
 
         let winner: SyncableFavorite;
         if (localItem && !remoteItem) {
@@ -158,7 +200,7 @@ export function mergeStates(
 
     // ── 2. 合併 Groups（per-item LWW） ──
     const localGroups = local.groups ?? [];
-    const remoteGroups = remote.groups ?? [];
+    const remoteGroups = actualRemote.groups ?? [];
     const allGroupIds = new Set<string>([
         ...localGroups.map((g) => g.id),
         ...remoteGroups.map((g) => g.id),
@@ -200,7 +242,7 @@ export function mergeStates(
 
     // ── 3. 合併 groupQueues（per-group） ──
     const localQueues = local.groupQueues ?? {};
-    const remoteQueues = remote.groupQueues ?? {};
+    const remoteQueues = actualRemote.groupQueues ?? {};
     const mergedGroupQueues: Record<string, string[]> = {};
 
     for (const gid of activeGroupIds) {
@@ -208,7 +250,7 @@ export function mergeStates(
         const remoteQ = remoteQueues[gid] ?? [];
 
         // 以 syncVersion 較高者的 queue 為基準
-        const baseQ = local._syncVersion >= remote._syncVersion ? localQ : remoteQ;
+        const baseQ = local._syncVersion >= actualRemote._syncVersion ? localQ : remoteQ;
 
         // 保留 baseQueue 中仍存活的 ID，再加入基準中不存在的新 ID
         const groupActiveFavIds = new Set(
@@ -226,12 +268,12 @@ export function mergeStates(
 
     // ── 4. 合併 groupCurrentDailyIds（per-group） ──
     const localCurrentIds = local.groupCurrentDailyIds ?? {};
-    const remoteCurrentIds = remote.groupCurrentDailyIds ?? {};
+    const remoteCurrentIds = actualRemote.groupCurrentDailyIds ?? {};
     const mergedGroupCurrentDailyIds: Record<string, string | null> = {};
 
     for (const gid of activeGroupIds) {
         const q = mergedGroupQueues[gid] ?? [];
-        const baseCurrent = local._syncVersion >= remote._syncVersion
+        const baseCurrent = local._syncVersion >= actualRemote._syncVersion
             ? (localCurrentIds[gid] ?? null)
             : (remoteCurrentIds[gid] ?? null);
         mergedGroupCurrentDailyIds[gid] = baseCurrent && q.includes(baseCurrent)
@@ -248,9 +290,9 @@ export function mergeStates(
 
     // ── 6. lastUpdateDate：取較新的日期 ──
     const mergedLastUpdateDate =
-        local.lastUpdateDate > remote.lastUpdateDate
+        local.lastUpdateDate > actualRemote.lastUpdateDate
             ? local.lastUpdateDate
-            : remote.lastUpdateDate;
+            : actualRemote.lastUpdateDate;
 
     return {
         favorites: mergedFavorites,
@@ -259,7 +301,7 @@ export function mergeStates(
         groupQueues: mergedGroupQueues,
         groupCurrentDailyIds: mergedGroupCurrentDailyIds,
         lastUpdateDate: mergedLastUpdateDate,
-        _syncVersion: Math.max(local._syncVersion, remote._syncVersion) + 1,
+        _syncVersion: Math.max(local._syncVersion, actualRemote._syncVersion) + 1,
         _lastSyncedAt: now,
         _deviceId: local._deviceId, // 合併操作由本地裝置發起
     };

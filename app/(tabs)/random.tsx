@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { theme } from '../../src/constants/theme';
+import type { ThemeColors, ThemeShadows } from '../../src/constants/theme';
+import { useThemeColors, useThemeShadows, useThemedStyles, useResolvedThemeMode } from '../../src/contexts/ThemeContext';
 import { useFavoriteStore, FavoriteRestaurant } from '../../src/store/useFavoriteStore';
 import { useUserStore } from '../../src/store/useUserStore';
 import { useMapJump } from '../../src/hooks/useMapJump';
@@ -40,6 +42,11 @@ export default function FavoriteRotationScreen() {
     const transportMode = useUserStore((s) => s.transportMode);
     const { jumpToMap } = useMapJump();
 
+    // ── 動態主題 ──
+    const colors = useThemeColors();
+    const shadows = useThemeShadows();
+    const resolvedMode = useResolvedThemeMode();
+    const styles = useThemedStyles((c, s) => createStyles(c, s));
 
     // ── 群組感知：只從啟用中群組抽獎 ──
     const favorites = useMemo(() => allFavorites.filter((f) => f.groupId === activeGroupId), [allFavorites, activeGroupId]);
@@ -67,20 +74,12 @@ export default function FavoriteRotationScreen() {
     // ── 篩選後的 favorites（需求 3：使用集中管理的 CATEGORY_LABELS，與附近餐廳同步）──
     const filteredFavorites = useMemo(() => {
         if (!selectedCategory) return favorites;
-        // 找到選中分類對應的 placesType（用於比對 Google Places 回傳的 category）
         const matchedCategory = FOOD_CATEGORIES.find((c) => c.label === selectedCategory);
         if (!matchedCategory) return favorites;
-        // 比對策略（確保新舊資料都能正確篩選）：
-        //   1. category 完全等於選中標籤（如 "麵類"）
-        //   2. category 完全等於對應的 placesType（如 "ramen_restaurant"）
-        //   3. category 經 resolveCategory 轉換後等於選中標籤
-        //      → 處理舊資料的 Google displayName（如 "拉麵店" → resolve → "麵類"）
         return favorites.filter((f) => {
-            // 沒有 category 的餐廳（手動新增）視為萬用，任何分類都可抽
             if (!f.category) return true;
             if (f.category === selectedCategory) return true;
             if (f.category === matchedCategory.placesType) return true;
-            // 逆向解析：將存儲的 category 當作 displayName 或 primaryType 嘗試 resolve
             const resolved = resolveCategory(f.category, f.category);
             return resolved === selectedCategory;
         });
@@ -96,17 +95,12 @@ export default function FavoriteRotationScreen() {
     // ── 當前推薦的餐廳（考慮篩選）──
     const [filteredCurrentId, setFilteredCurrentId] = useState<string | null>(null);
 
-    // 初始化 / 校正 filteredCurrentId
-    // 只在 filteredCurrentId 不存在於 filteredQueue 時才重新指定，
-    // 避免 skipCurrent() 觸發 queue 重排後覆蓋 handleSkip 設定的 nextId
     useEffect(() => {
         if (filteredQueue.length === 0) {
             setFilteredCurrentId(null);
             return;
         }
-        // 當前 ID 仍在篩選後佇列中 → 不干預
         if (filteredCurrentId && filteredQueue.includes(filteredCurrentId)) return;
-        // 當前 ID 無效 → 嘗試用 currentDailyId，否則用 queue[0]
         if (currentDailyId && filteredQueue.includes(currentDailyId)) {
             setFilteredCurrentId(currentDailyId);
         } else {
@@ -120,20 +114,17 @@ export default function FavoriteRotationScreen() {
 
     // ── 換一家（整合需求 1 + 3 + 4 + 自動跳過已打烊）──
     const handleSkip = useCallback(async () => {
-        // 第一次按下 → 僅揭曉當前餐廳，不需要 skip
         if (!isRevealed) {
             setIsRevealed(true);
             setOpenStatus(null);
             if (currentRestaurant) {
-                // 揭曉時也檢查營業狀態，若已打烊則自動跳過
                 if (currentRestaurant.placeId) {
                     setCheckingStatus(true);
                     try {
                         const status = await placeDetailsService.getPlaceOpenStatus(currentRestaurant.placeId);
                         if (status.isVerified && !status.isOpenNow && filteredQueue.length > 1) {
-                            // 已打烊 → 自動跳到下一家
                             setCheckingStatus(false);
-                            setIsRevealed(true); // 保持揭曉狀態
+                            setIsRevealed(true);
                             await skipToNextOpen(filteredQueue.indexOf(filteredCurrentId ?? ''));
                             return;
                         }
@@ -150,17 +141,12 @@ export default function FavoriteRotationScreen() {
             return;
         }
 
-        // 已揭曉狀態下，需要至少 2 個以上才能「換一家」
         if (filteredQueue.length <= 1) return;
 
         const currentIdx = filteredQueue.indexOf(filteredCurrentId ?? '');
         await skipToNextOpen(currentIdx);
     }, [isRevealed, filteredQueue, filteredCurrentId, filteredFavorites, currentRestaurant, skipCurrent]);
 
-    /**
-     * 從 startIdx 開始往後找第一個「營業中」或「無法確認」的餐廳。
-     * 最多嘗試 filteredQueue.length 次，避免全部打烊時無限迴圈。
-     */
     const skipToNextOpen = useCallback(async (startIdx: number) => {
         const maxAttempts = filteredQueue.length;
         let candidateIdx = startIdx;
@@ -175,7 +161,6 @@ export default function FavoriteRotationScreen() {
 
             if (!restaurant) continue;
 
-            // 沒有 placeId → 無法確認營業狀態 → 視為可用
             if (!restaurant.placeId) {
                 setFilteredCurrentId(candidateId);
                 skipCurrent();
@@ -184,20 +169,16 @@ export default function FavoriteRotationScreen() {
                 return;
             }
 
-            // 查詢營業狀態
             try {
                 const status = await placeDetailsService.getPlaceOpenStatus(restaurant.placeId);
                 if (!status.isVerified || status.isOpenNow) {
-                    // 營業中 or 無法確認 → 選中
                     setFilteredCurrentId(candidateId);
                     skipCurrent();
                     setOpenStatus(status);
                     setCheckingStatus(false);
                     return;
                 }
-                // 已打烊（verified closed）→ 繼續找下一家
             } catch {
-                // API 失敗 → 視為無法確認，選中此家
                 setFilteredCurrentId(candidateId);
                 skipCurrent();
                 setOpenStatus({ isOpenNow: true, isVerified: false });
@@ -206,7 +187,6 @@ export default function FavoriteRotationScreen() {
             }
         }
 
-        // 全部都打烊了 → 退而求其次，選下一家並告知使用者
         const fallbackIdx = (startIdx + 1) % filteredQueue.length;
         const fallbackId = filteredQueue[fallbackIdx];
         setFilteredCurrentId(fallbackId);
@@ -233,7 +213,7 @@ export default function FavoriteRotationScreen() {
                     <Pressable style={styles.backButton}>
                         {({ pressed }) => (
                             <View style={[styles.backButtonInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                                <Ionicons name="arrow-back-outline" size={20} color={theme.colors.primary} />
+                                <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
                                 <Text style={styles.backText}>返回</Text>
                             </View>
                         )}
@@ -243,7 +223,7 @@ export default function FavoriteRotationScreen() {
                 <Pressable style={styles.headerRightBtn} onPress={() => router.push('/favorites')} accessibilityRole="button" accessibilityLabel="我的清單">
                     {({ pressed }) => (
                         <View style={[styles.headerRightInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                            <Ionicons name="list-outline" size={20} color={theme.colors.primary} />
+                            <Ionicons name="list-outline" size={20} color={colors.primary} />
                             <Text style={styles.headerRightText}>清單</Text>
                         </View>
                     )}
@@ -253,7 +233,7 @@ export default function FavoriteRotationScreen() {
         </>
     );
 
-    // ─── 分類篩選 Chip 列（需求 3：使用集中管理的 CATEGORY_LABELS，與附近餐廳同步）───
+    // ─── 分類篩選 Chip 列（需求 3）───
     const renderCategoryChips = () => (
         <ScrollView
             horizontal
@@ -289,7 +269,7 @@ export default function FavoriteRotationScreen() {
         if (checkingStatus) {
             return (
                 <View style={styles.statusBadge}>
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
                     <Text style={styles.statusBadgeText}>查詢營業狀態...</Text>
                 </View>
             );
@@ -298,8 +278,8 @@ export default function FavoriteRotationScreen() {
         if (!openStatus.isVerified) {
             return (
                 <View style={[styles.statusBadge, styles.statusBadgeUnknown]}>
-                    <Ionicons name="help-circle-outline" size={16} color={theme.colors.textSecondary} />
-                    <Text style={[styles.statusBadgeText, { color: theme.colors.textSecondary }]}>無法確認營業狀態</Text>
+                    <Ionicons name="help-circle-outline" size={16} color={colors.textSecondary} />
+                    <Text style={[styles.statusBadgeText, { color: colors.textSecondary }]}>無法確認營業狀態</Text>
                 </View>
             );
         }
@@ -308,9 +288,9 @@ export default function FavoriteRotationScreen() {
                 <Ionicons
                     name={openStatus.isOpenNow ? 'checkmark-circle' : 'close-circle'}
                     size={16}
-                    color={openStatus.isOpenNow ? theme.colors.success : theme.colors.error}
+                    color={openStatus.isOpenNow ? colors.success : colors.error}
                 />
-                <Text style={[styles.statusBadgeText, { color: openStatus.isOpenNow ? theme.colors.success : theme.colors.error }]}>
+                <Text style={[styles.statusBadgeText, { color: openStatus.isOpenNow ? colors.success : colors.error }]}>
                     {openStatus.isOpenNow ? '營業中' : '已打烊'}
                 </Text>
             </View>
@@ -344,7 +324,7 @@ export default function FavoriteRotationScreen() {
                                         ) : null}
                                     </View>
                                     <Pressable onPress={() => handleRemove(item.id, item.name)}>
-                                        <Ionicons name="trash-outline" size={20} color={theme.colors.error} />
+                                        <Ionicons name="trash-outline" size={20} color={colors.error} />
                                     </Pressable>
                                 </View>
                             )}
@@ -368,13 +348,13 @@ export default function FavoriteRotationScreen() {
             <View style={styles.screenContainer}>
                 {renderHeader()}
                 <View style={styles.emptyContent}>
-                    <Ionicons name="restaurant-outline" size={80} color={theme.colors.textSecondary} />
+                    <Ionicons name="restaurant-outline" size={80} color={colors.textSecondary} />
                     <Text style={styles.emptyTitle}>還沒有最愛餐廳</Text>
                     <Text style={styles.emptyDesc}>先新增幾家愛吃的餐廳{'\n'}系統會每天幫你排一家！</Text>
                     <Pressable onPress={() => setShowAddModal(true)} accessibilityRole="button" accessibilityLabel="新增最愛餐廳">
                         {({ pressed }) => (
                             <View style={[styles.addButton, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                                <Ionicons name="add-circle-outline" size={22} color={theme.colors.onPrimary} />
+                                <Ionicons name="add-circle-outline" size={22} color={colors.onPrimary} />
                                 <Text style={styles.addButtonText}>新增最愛餐廳</Text>
                             </View>
                         )}
@@ -392,7 +372,7 @@ export default function FavoriteRotationScreen() {
                 {renderHeader()}
                 {renderCategoryChips()}
                 <View style={styles.emptyContent}>
-                    <Ionicons name="filter-outline" size={60} color={theme.colors.textSecondary} />
+                    <Ionicons name="filter-outline" size={60} color={colors.textSecondary} />
                     <Text style={styles.emptyTitle}>此分類沒有餐廳</Text>
                     <Text style={styles.emptyDesc}>試試選擇「全部」或其他分類</Text>
                 </View>
@@ -445,23 +425,23 @@ export default function FavoriteRotationScreen() {
                 <View style={styles.actionRow}>
                     {isRevealed && currentRestaurant && (
                         <Pressable
-                            style={({ pressed }) => [styles.actionBtn, { backgroundColor: theme.colors.primary }, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                            style={({ pressed }) => [styles.actionBtn, { backgroundColor: colors.primary }, pressed && { opacity: theme.interaction.pressedOpacity }]}
                             onPress={() => jumpToMap(currentRestaurant.address || currentRestaurant.name, transportMode)}
                             accessibilityRole="button"
                             accessibilityLabel="在 Google Maps 上查看"
                         >
-                            <Ionicons name="navigate-outline" size={20} color={theme.colors.onPrimary} />
+                            <Ionicons name="navigate-outline" size={20} color={colors.onPrimary} />
                             <Text style={styles.actionBtnText}>導航</Text>
                         </Pressable>
                     )}
                     <Pressable
-                        style={({ pressed }) => [styles.actionBtn, { backgroundColor: theme.colors.secondary }, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                        style={({ pressed }) => [styles.actionBtn, { backgroundColor: colors.secondary }, pressed && { opacity: theme.interaction.pressedOpacity }]}
                         onPress={handleSkip}
                         disabled={filteredQueue.length <= 1 && isRevealed}
                         accessibilityRole="button"
                         accessibilityLabel="抽獎"
                     >
-                        <Ionicons name="dice-outline" size={20} color={theme.colors.onPrimary} />
+                        <Ionicons name="dice-outline" size={20} color={colors.onPrimary} />
                         <Text style={styles.actionBtnText}>抽獎</Text>
                     </Pressable>
                 </View>
@@ -469,7 +449,7 @@ export default function FavoriteRotationScreen() {
                 {/* 已打烊提示（需求 4）*/}
                 {isRevealed && openStatus?.isVerified && !openStatus.isOpenNow && (
                     <View style={styles.closedHint}>
-                        <Ionicons name="warning-outline" size={18} color={theme.colors.error} />
+                        <Ionicons name="warning-outline" size={18} color={colors.error} />
                         <Text style={styles.closedHintText}>這家已打烊，要再換一家嗎？</Text>
                     </View>
                 )}
@@ -482,302 +462,303 @@ export default function FavoriteRotationScreen() {
     );
 }
 
-// ──────────── Styles ────────────
-const styles = StyleSheet.create({
-    screenContainer: {
-        flex: 1,
-        backgroundColor: theme.colors.background,
-        paddingTop: Platform.OS === 'web' ? 16 : 52,
-    },
-    // ── 自訂 Header（與 menu / favorites / settings 統一風格）──
-    customHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingBottom: 16,
-    },
-    customHeaderTitle: {
-        ...theme.typography.h2,
-        color: theme.colors.text,
-    },
-    backButton: {
-        width: 80,
-    },
-    backButtonInner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    backText: {
-        ...theme.typography.body,
-        color: theme.colors.primary,
-        fontWeight: '500',
-    },
-    headerRightBtn: {
-        width: 80,
-        alignItems: 'flex-end',
-    },
-    headerRightInner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    headerRightText: {
-        ...theme.typography.body,
-        color: theme.colors.primary,
-        fontWeight: '500',
-    },
-    divider: {
-        height: 1,
-        backgroundColor: theme.colors.border,
-        marginHorizontal: 16,
-        marginBottom: 12,
-    },
-    // ── 分類 Chip（需求 3）──
-    chipScroll: {
-        marginHorizontal: 16,
-        marginBottom: theme.spacing.sm,
-        maxHeight: 40,
-    },
-    chipScrollContent: {
-        flexDirection: 'row',
-        flexWrap: 'nowrap',
-        gap: theme.spacing.sm,
-        paddingRight: theme.spacing.md,
-    },
-    chip: {
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: 6,
-        borderRadius: theme.borderRadius.full,
-        backgroundColor: theme.colors.surface,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-    },
-    chipActive: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
-    },
-    chipText: {
-        ...theme.typography.caption,
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-    },
-    chipTextActive: {
-        color: theme.colors.onPrimary,
-        fontWeight: 'bold',
-    },
-    // ── 主要內容區域 ──
-    mainContent: {
-        flex: 1,
-        padding: theme.spacing.lg,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    // ── 空狀態 ──
-    emptyContent: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: theme.spacing.lg,
-    },
-    emptyTitle: {
-        ...theme.typography.h2,
-        color: theme.colors.text,
-        marginTop: theme.spacing.lg,
-    },
-    emptyDesc: {
-        ...theme.typography.bodySmall,
-        fontSize: 15,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-        marginTop: theme.spacing.sm,
-        marginBottom: theme.spacing.xl,
-        lineHeight: 22,
-    },
-    addButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        backgroundColor: theme.colors.primary,
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.xl,
-        borderRadius: theme.borderRadius.lg,
-    },
-    addButtonText: {
-        color: theme.colors.onPrimary,
-        ...theme.typography.label,
-    },
-    // ── 盲盒卡片（需求 1）──
-    blindBoxCard: {
-        backgroundColor: theme.colors.surface,
-        width: '100%',
-        padding: theme.spacing.xl,
-        borderRadius: theme.borderRadius.lg,
-        alignItems: 'center',
-        ...theme.shadows.md,
-        marginBottom: theme.spacing.xl,
-        borderWidth: 2,
-        borderColor: theme.colors.primary,
-        borderStyle: 'dashed',
-    },
-    blindBoxEmoji: { fontSize: 64, marginBottom: theme.spacing.md },
-    blindBoxTitle: {
-        ...theme.typography.h2,
-        color: theme.colors.text,
-        marginBottom: theme.spacing.xs,
-    },
-    blindBoxDesc: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-    },
-    // ── 今日推薦 ──
-    todayLabel: {
-        ...theme.typography.body,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.sm,
-    },
-    todayCard: {
-        backgroundColor: theme.colors.surface,
-        width: '100%',
-        padding: theme.spacing.xl,
-        borderRadius: theme.borderRadius.lg,
-        alignItems: 'center',
-        ...theme.shadows.md,
-        marginBottom: theme.spacing.xl,
-    },
-    todayEmoji: { fontSize: 48, marginBottom: theme.spacing.md },
-    todayName: {
-        ...theme.typography.h1,
-        color: theme.colors.text,
-    },
-    todayCategory: {
-        ...theme.typography.caption,
-        color: theme.colors.primary,
-        marginTop: theme.spacing.xs,
-        fontWeight: '600',
-    },
-    todayNote: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginTop: theme.spacing.xs,
-    },
-    todayAddress: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-        marginTop: theme.spacing.xs,
-        textAlign: 'center',
-    },
-    // ── 營業狀態 Badge（需求 4）──
-    statusBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        marginTop: theme.spacing.md,
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: 4,
-        borderRadius: theme.borderRadius.full,
-        backgroundColor: theme.colors.background,
-    },
-    statusBadgeOpen: {
-        backgroundColor: `${theme.colors.success}18`,
-    },
-    statusBadgeClosed: {
-        backgroundColor: `${theme.colors.error}18`,
-    },
-    statusBadgeUnknown: {
-        backgroundColor: theme.colors.background,
-    },
-    statusBadgeText: {
-        ...theme.typography.caption,
-        fontWeight: '600',
-    },
-    // ── 已打烊提示 ──
-    closedHint: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        backgroundColor: `${theme.colors.error}12`,
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        marginBottom: theme.spacing.md,
-    },
-    closedHintText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.error,
-        fontWeight: '500',
-    },
-    // ── 操作按鈕 ──
-    actionRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.md,
-        marginBottom: theme.spacing.lg,
-    },
-    actionBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.xl,
-        borderRadius: theme.borderRadius.lg,
-    },
-    actionBtnText: {
-        color: theme.colors.onPrimary,
-        ...theme.typography.bodySmall,
-        fontSize: 15,
-        fontWeight: '600',
-    },
+// ──────────── Dynamic Styles Factory ────────────
+function createStyles(c: ThemeColors, s: ThemeShadows) {
+    return StyleSheet.create({
+        screenContainer: {
+            flex: 1,
+            backgroundColor: c.background,
+            paddingTop: Platform.OS === 'web' ? 16 : 52,
+        },
+        // ── 自訂 Header ──
+        customHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+            paddingBottom: 16,
+        },
+        customHeaderTitle: {
+            ...theme.typography.h2,
+            color: c.text,
+        },
+        backButton: {
+            width: 80,
+        },
+        backButtonInner: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+        },
+        backText: {
+            ...theme.typography.body,
+            color: c.primary,
+            fontWeight: '500',
+        },
+        headerRightBtn: {
+            width: 80,
+            alignItems: 'flex-end',
+        },
+        headerRightInner: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+        },
+        headerRightText: {
+            ...theme.typography.body,
+            color: c.primary,
+            fontWeight: '500',
+        },
+        divider: {
+            height: 1,
+            backgroundColor: c.border,
+            marginHorizontal: 16,
+            marginBottom: 12,
+        },
+        // ── 分類 Chip（需求 3）──
+        chipScroll: {
+            marginHorizontal: 16,
+            marginBottom: theme.spacing.sm,
+            maxHeight: 40,
+        },
+        chipScrollContent: {
+            flexDirection: 'row',
+            flexWrap: 'nowrap',
+            gap: theme.spacing.sm,
+            paddingRight: theme.spacing.md,
+        },
+        chip: {
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: 6,
+            borderRadius: theme.borderRadius.full,
+            backgroundColor: c.surface,
+            borderWidth: 1,
+            borderColor: c.border,
+        },
+        chipActive: {
+            backgroundColor: c.primary,
+            borderColor: c.primary,
+        },
+        chipText: {
+            ...theme.typography.caption,
+            fontSize: 13,
+            color: c.textSecondary,
+        },
+        chipTextActive: {
+            color: c.onPrimary,
+            fontWeight: 'bold',
+        },
+        // ── 主要內容區域 ──
+        mainContent: {
+            flex: 1,
+            padding: theme.spacing.lg,
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+        // ── 空狀態 ──
+        emptyContent: {
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: theme.spacing.lg,
+        },
+        emptyTitle: {
+            ...theme.typography.h2,
+            color: c.text,
+            marginTop: theme.spacing.lg,
+        },
+        emptyDesc: {
+            ...theme.typography.bodySmall,
+            fontSize: 15,
+            color: c.textSecondary,
+            textAlign: 'center',
+            marginTop: theme.spacing.sm,
+            marginBottom: theme.spacing.xl,
+            lineHeight: 22,
+        },
+        addButton: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.sm,
+            backgroundColor: c.primary,
+            paddingVertical: theme.spacing.md,
+            paddingHorizontal: theme.spacing.xl,
+            borderRadius: theme.borderRadius.lg,
+        },
+        addButtonText: {
+            color: c.onPrimary,
+            ...theme.typography.label,
+        },
+        // ── 盲盒卡片（需求 1）──
+        blindBoxCard: {
+            backgroundColor: c.surface,
+            width: '100%',
+            padding: theme.spacing.xl,
+            borderRadius: theme.borderRadius.lg,
+            alignItems: 'center',
+            ...s.md,
+            marginBottom: theme.spacing.xl,
+            borderWidth: 2,
+            borderColor: c.primary,
+            borderStyle: 'dashed',
+        },
+        blindBoxEmoji: { fontSize: 64, marginBottom: theme.spacing.md },
+        blindBoxTitle: {
+            ...theme.typography.h2,
+            color: c.text,
+            marginBottom: theme.spacing.xs,
+        },
+        blindBoxDesc: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+            textAlign: 'center',
+        },
+        // ── 今日推薦 ──
+        todayLabel: {
+            ...theme.typography.body,
+            color: c.textSecondary,
+            marginBottom: theme.spacing.sm,
+        },
+        todayCard: {
+            backgroundColor: c.surface,
+            width: '100%',
+            padding: theme.spacing.xl,
+            borderRadius: theme.borderRadius.lg,
+            alignItems: 'center',
+            ...s.md,
+            marginBottom: theme.spacing.xl,
+        },
+        todayEmoji: { fontSize: 48, marginBottom: theme.spacing.md },
+        todayName: {
+            ...theme.typography.h1,
+            color: c.text,
+        },
+        todayCategory: {
+            ...theme.typography.caption,
+            color: c.primary,
+            marginTop: theme.spacing.xs,
+            fontWeight: '600',
+        },
+        todayNote: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+            marginTop: theme.spacing.xs,
+        },
+        todayAddress: {
+            ...theme.typography.caption,
+            color: c.textSecondary,
+            marginTop: theme.spacing.xs,
+            textAlign: 'center',
+        },
+        // ── 營業狀態 Badge（需求 4）──
+        statusBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            marginTop: theme.spacing.md,
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: 4,
+            borderRadius: theme.borderRadius.full,
+            backgroundColor: c.background,
+        },
+        statusBadgeOpen: {
+            backgroundColor: `${c.success}18`,
+        },
+        statusBadgeClosed: {
+            backgroundColor: `${c.error}18`,
+        },
+        statusBadgeUnknown: {
+            backgroundColor: c.background,
+        },
+        statusBadgeText: {
+            ...theme.typography.caption,
+            fontWeight: '600',
+        },
+        // ── 已打烊提示 ──
+        closedHint: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.xs,
+            backgroundColor: `${c.error}12`,
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: theme.spacing.sm,
+            borderRadius: theme.borderRadius.md,
+            marginBottom: theme.spacing.md,
+        },
+        closedHintText: {
+            ...theme.typography.bodySmall,
+            color: c.error,
+            fontWeight: '500',
+        },
+        // ── 操作按鈕 ──
+        actionRow: {
+            flexDirection: 'row',
+            gap: theme.spacing.md,
+            marginBottom: theme.spacing.lg,
+        },
+        actionBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.sm,
+            paddingVertical: theme.spacing.md,
+            paddingHorizontal: theme.spacing.xl,
+            borderRadius: theme.borderRadius.lg,
+        },
+        actionBtnText: {
+            color: c.onPrimary,
+            ...theme.typography.bodySmall,
+            fontSize: 15,
+            fontWeight: '600',
+        },
 
-
-    // ── Modal 共用 ──
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: theme.colors.overlay,
-        justifyContent: 'center',
-        padding: theme.spacing.lg,
-    },
-    modalContent: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.borderRadius.lg,
-        padding: theme.spacing.xl,
-    },
-    modalTitle: {
-        ...theme.typography.h3,
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-        marginBottom: theme.spacing.lg,
-    },
-    modalActions: {
-        flexDirection: 'row',
-        gap: theme.spacing.md,
-        marginTop: theme.spacing.sm,
-    },
-    modalBtn: {
-        flex: 1,
-        paddingVertical: theme.spacing.md,
-        borderRadius: theme.borderRadius.md,
-        alignItems: 'center',
-    },
-    cancelBtn: {
-        backgroundColor: theme.colors.background,
-    },
-    cancelBtnText: { color: theme.colors.textSecondary, fontWeight: '600' },
-    confirmBtn: {
-        backgroundColor: theme.colors.primary,
-    },
-    confirmBtnText: { color: theme.colors.onPrimary, fontWeight: '600' },
-    // ── 清單 Modal ──
-    listItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: theme.spacing.md,
-    },
-    listItemName: { ...theme.typography.body, fontWeight: '600', color: theme.colors.text },
-    listItemCategory: { ...theme.typography.caption, color: theme.colors.primary, marginTop: 2, fontWeight: '500' },
-    listItemNote: { ...theme.typography.caption, fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
-    listItemAddress: { ...theme.typography.caption, fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-    separator: { height: 1, backgroundColor: theme.colors.border },
-});
+        // ── Modal 共用 ──
+        modalOverlay: {
+            flex: 1,
+            backgroundColor: c.overlay,
+            justifyContent: 'center',
+            padding: theme.spacing.lg,
+        },
+        modalContent: {
+            backgroundColor: c.surface,
+            borderRadius: theme.borderRadius.lg,
+            padding: theme.spacing.xl,
+        },
+        modalTitle: {
+            ...theme.typography.h3,
+            fontSize: 20,
+            fontWeight: 'bold',
+            color: c.text,
+            marginBottom: theme.spacing.lg,
+        },
+        modalActions: {
+            flexDirection: 'row',
+            gap: theme.spacing.md,
+            marginTop: theme.spacing.sm,
+        },
+        modalBtn: {
+            flex: 1,
+            paddingVertical: theme.spacing.md,
+            borderRadius: theme.borderRadius.md,
+            alignItems: 'center',
+        },
+        cancelBtn: {
+            backgroundColor: c.background,
+        },
+        cancelBtnText: { color: c.textSecondary, fontWeight: '600' },
+        confirmBtn: {
+            backgroundColor: c.primary,
+        },
+        confirmBtnText: { color: c.onPrimary, fontWeight: '600' },
+        // ── 清單 Modal ──
+        listItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: theme.spacing.md,
+        },
+        listItemName: { ...theme.typography.body, fontWeight: '600', color: c.text },
+        listItemCategory: { ...theme.typography.caption, color: c.primary, marginTop: 2, fontWeight: '500' },
+        listItemNote: { ...theme.typography.caption, fontSize: 13, color: c.textSecondary, marginTop: 2 },
+        listItemAddress: { ...theme.typography.caption, fontSize: 12, color: c.textSecondary, marginTop: 2 },
+        separator: { height: 1, backgroundColor: c.border },
+    });
+}

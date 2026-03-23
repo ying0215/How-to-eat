@@ -1,5 +1,5 @@
 // ============================================================
-// 🔘 Button.tsx — 全站通用按鈕組件
+// 🔘 Button.tsx — 全站通用按鈕組件（動態主題版）
 // ============================================================
 //
 // 依照 PAGE_SPEC.md § 4.1 按鈕樣式規範實作，
@@ -24,13 +24,12 @@ import React from 'react';
 import {
     Pressable,
     Text,
-    StyleSheet,
     ActivityIndicator,
     ViewStyle,
-    TextStyle,
     View,
 } from 'react-native';
 import { theme } from '../../constants/theme';
+import { useThemeColors, useThemeShadows } from '../../contexts/ThemeContext';
 
 // ── Variant / Size 型別 ──
 
@@ -95,25 +94,27 @@ export const Button: React.FC<ButtonProps> = ({
     style,
     accessibilityLabel,
 }) => {
+    const colors = useThemeColors();
+    const shadows = useThemeShadows();
     const sizeSpec = SIZE_MAP[size];
 
     // ── 背景色 ──
     const getBackgroundColor = (): string => {
         switch (variant) {
             case 'primary':
-                return theme.colors.primary;
+                return colors.primary;
             case 'secondary':
                 return 'transparent';
             case 'danger':
-                return theme.colors.error;
+                return colors.error;
             case 'text':
                 return 'transparent';
             case 'icon':
                 return 'transparent';
             case 'segmented':
-                return active ? theme.colors.primary : theme.colors.surface;
+                return active ? colors.primary : colors.surface;
             default:
-                return theme.colors.primary;
+                return colors.primary;
         }
     };
 
@@ -121,19 +122,19 @@ export const Button: React.FC<ButtonProps> = ({
     const getTextColor = (): string => {
         switch (variant) {
             case 'primary':
-                return '#FFFFFF';
+                return colors.onPrimary;
             case 'secondary':
-                return theme.colors.primary;
+                return colors.primary;
             case 'danger':
-                return '#FFFFFF';
+                return colors.onPrimary;
             case 'text':
-                return theme.colors.textSecondary;
+                return colors.textSecondary;
             case 'icon':
-                return theme.colors.text;
+                return colors.text;
             case 'segmented':
-                return active ? '#FFFFFF' : theme.colors.textSecondary;
+                return active ? colors.onPrimary : colors.textSecondary;
             default:
-                return '#FFFFFF';
+                return colors.onPrimary;
         }
     };
 
@@ -141,9 +142,9 @@ export const Button: React.FC<ButtonProps> = ({
     const getBorder = (): Pick<ViewStyle, 'borderWidth' | 'borderColor'> => {
         switch (variant) {
             case 'secondary':
-                return { borderWidth: 1, borderColor: theme.colors.primary };
+                return { borderWidth: 1, borderColor: colors.primary };
             case 'segmented':
-                return { borderWidth: 1, borderColor: active ? theme.colors.primary : theme.colors.border };
+                return { borderWidth: 1, borderColor: active ? colors.primary : colors.border };
             default:
                 return { borderWidth: 0, borderColor: 'transparent' };
         }
@@ -157,7 +158,7 @@ export const Button: React.FC<ButtonProps> = ({
 
     // ── 陰影：僅 primary variant ──
     const getShadow = (): ViewStyle => {
-        if (variant === 'primary' && !disabled) return theme.shadows.sm;
+        if (variant === 'primary' && !disabled) return shadows.sm;
         return {};
     };
 

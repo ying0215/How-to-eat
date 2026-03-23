@@ -85,6 +85,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // useSyncOrchestrator：自動偵測 FavoriteStore 變化並同步到 Google Drive
 import { useGoogleAuth } from '../src/auth/useGoogleAuth';
 import { useSyncOrchestrator } from '../src/sync/useSyncOrchestrator';
+import { AppThemeProvider, useResolvedThemeMode } from '../src/contexts/ThemeContext';
 
 
 
@@ -123,37 +124,14 @@ export const unstable_settings = {
  *    - 主題包住導航器，這樣導航列、標頭才能自動套用主題色
  */
 export default function RootLayout() {
-  // 📱 取得系統的顏色模式設定
-  // colorScheme 的值：'light' | 'dark' | null
-  // null 代表系統無法判定（極少見），此時我們視為 light 模式
-  const colorScheme = useColorScheme();
-
-  // 🔤 載入 Ionicons 字型
-  // fontsLoaded：布林值，true 表示字型已成功載入完畢
-  // 💡 字型載入是非同步的，在載入完成前 fontsLoaded 為 false，
-  //    此時我們回傳 null 讓畫面保持空白，避免顯示缺字的 UI
   const [fontsLoaded] = useFonts({
     ...Ionicons.font,
   });
 
-  // ☁️ Google 雲端同步初始化
-  // getValidToken 提供有效的 access token（自動刷新過期 token）
-  // useSyncOrchestrator 監聯 FavoriteStore 變化，debounce 後自動同步
   const { getValidToken } = useGoogleAuth();
   useSyncOrchestrator(getValidToken);
 
   // 🛡️ Web Pointer-Events 修復（透過全域 CSS）
-  // ⚠️ 此 useEffect 必須放在「if (!fontsLoaded) return null」之前！
-  //    React 的 Rules of Hooks 要求每次渲染呼叫的 hooks 數量與順序完全一致。
-  //    如果放在 early return 之後，首次渲染（fontsLoaded=false）不會呼叫到它，
-  //    第二次渲染（fontsLoaded=true）才呼叫，導致 hooks 數量不一致而報錯。
-  //
-  // React Navigation 預設將 Stack 的 content container 設為 pointer-events: none，
-  // 這在 React Native 中是 'box-none'（容器不接受觸控，子元素可以），
-  // 但 react-native-web 錯誤地將其映射為 CSS pointer-events: none（完全阻斷觸控）。
-  //
-  // 改用全域 CSS 注入可直接覆蓋 DOM 層的 pointer-events: none，
-  // 完全繞過 react-native-web 的 prop 警告機制。
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
@@ -171,72 +149,37 @@ export default function RootLayout() {
     };
   }, []);
 
-  // ⏳ 字型尚未載入完成時，不渲染任何內容
-  // 💡 這個短暫的空白期通常只有幾十毫秒，使用者幾乎感覺不到
-  // ❌ 如果不做這個檢查：UI 會先渲染出來但圖示是空白的，
-  //    然後字型載入完成後突然跳出來，造成「閃爍」（FOIT - Flash of Invisible Text）
   if (!fontsLoaded) {
     return null;
   }
 
   return (
-    // 🧤 第 1 層：手勢根容器
-    // style={{ flex: 1 }} 讓容器佔滿整個螢幕。
-    // ❌ 如果忘了 flex: 1，畫面會縮成 0 高度（什麼都看不到）！
     <GestureHandlerRootView style={{ flex: 1 }}>
-
-      {/* 🎨 第 2 層：主題 Provider */}
-      {/* 用三元運算子：如果是深色模式就用 DarkTheme，否則用 DefaultTheme */}
-      {/* 💡 這裡的 value 會透過 React Context 傳給所有 React Navigation 元件 */}
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-
-        {/* 🧭 第 3 層：堆疊式導航器 */}
-
-        {/* Stack 裡面的每個 Stack.Screen 對應 app/ 資料夾中的一個檔案或子資料夾 */}
-          {/* screenOptions.contentStyle 覆蓋 React Navigation 的 pointerEvents="box-none" */}
-          {/* 防止 Web 上的 pointer-events: none 阻擋子元素互動 */}
-          <Stack
-            screenOptions={{
-              // 🛡️ Web 上的 pointer-events 修復已移至全域 CSS 注入（上方 useEffect）
-              // 避免 react-native-web 的 props.pointerEvents deprecation warning
-            }}
-          >
-            {/* 📄 index 頁面（app/index.tsx） */}
-            {/* headerShown: false → 隱藏頂部導航列 */}
-            {/* 通常 index 是啟動畫面或重導向頁面，不需要顯示標頭 */}
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-
-            {/* 📑 Tab 群組（app/(tabs)/ 資料夾） */}
-            {/* 這個 Screen 代表整個底部 Tab Bar 頁面群組 */}
-            {/* headerShown: false → 隱藏 Stack 層級的標頭 */}
-            {/* 💡 因為 Tab 群組有自己的 _layout.tsx，會自行處理標頭 */}
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-
-            {/* 📋 功能清單頁面（app/menu.tsx） */}
-            {/* 從首頁左上角的 ☰ 按鈕進入 */}
-            <Stack.Screen name="menu" options={{ headerShown: false }} />
-
-            {/* ❤️ 最愛清單頁面（app/favorites.tsx） */}
-            {/* 從 Tab 群組移出後，作為獨立堆疊頁面存取 */}
-            {/* 💡 透過首頁功能清單或其他導航入口進入 */}
-            <Stack.Screen name="favorites" options={{ headerShown: false }} />
-
-            {/* ⚙️ 設定頁面（app/settings.tsx） */}
-            {/* headerShown: false → 禁用 Stack 預設 Header，由頁面自行管理 */}
-            {/* contentStyle: { pointerEvents: 'auto' } → 覆蓋 React Navigation */}
-            {/*   預設的 pointerEvents: 'box-none'（在 Web 上會被轉譯為 pointer-events: none） */}
-            <Stack.Screen name="settings" options={{ headerShown: false }} />
-          </Stack>
-
-          {/* 📊 狀態列設定 */}
-          {/* style="auto" → 自動根據當前主題選擇圖示顏色 */}
-          {/*   深色主題 → 白色圖示（才看得見） */}
-          {/*   淺色主題 → 黑色圖示（才看得見） */}
-          {/* 💡 放在 ThemeProvider 裡面，才能正確讀取到當前主題 */}
-          <StatusBar style="auto" />
-
-      </ThemeProvider>
+      {/* 🎨 AppThemeProvider：管理 Light/Dark 主題切換 */}
+      <AppThemeProvider>
+        <RootLayoutInner />
+      </AppThemeProvider>
     </GestureHandlerRootView>
+  );
+}
+
+/**
+ * RootLayoutInner — 需在 AppThemeProvider 內部，才能使用 useResolvedThemeMode()
+ */
+function RootLayoutInner() {
+  const resolvedMode = useResolvedThemeMode();
+
+  return (
+    <ThemeProvider value={resolvedMode === 'dark' ? DarkTheme : DefaultTheme}>
+      <Stack screenOptions={{}}>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="menu" options={{ headerShown: false }} />
+        <Stack.Screen name="favorites" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ headerShown: false }} />
+      </Stack>
+      <StatusBar style={resolvedMode === 'dark' ? 'light' : 'dark'} />
+    </ThemeProvider>
   );
 }
 

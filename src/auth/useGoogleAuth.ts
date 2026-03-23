@@ -20,7 +20,7 @@
 //   - Web 使用 PKCE 保護 Authorization Code 交換
 // ============================================================================
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { create } from 'zustand';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
@@ -578,8 +578,8 @@ export function useGoogleAuth() {
     // ── Redirect URI ──
     // expo-auth-session 會根據平台自動選擇適合的 redirect URI。
     // Web: 使用當前域名（需特別處理 GitHub Pages 子路徑）
-    // Native (Expo Go): 使用 Expo Auth Proxy（HTTPS redirect，繞過 custom scheme 限制）
-    // Native (獨立 Build): 使用 custom scheme (mobile://)
+    // Native (Expo Go): 產生一個佔位 URI（OAuth 實際上不可用）
+    // Native (獨立 Build): 使用已註冊的 HTTPS redirect URI
     //
     // ⚠️ GitHub Pages 部署修正：
     //   AuthSession.makeRedirectUri() 在 GitHub Pages 上只會產生
@@ -587,8 +587,16 @@ export function useGoogleAuth() {
     //   /How-to-eat/ 子路徑下。Google OAuth 回調後會導向根路徑，
     //   造成 404 頁面。
     //   修正方式：在 Web 上使用 window.location.origin + baseUrl 作為 redirect URI。
-    const redirectUri = Platform.OS === 'web'
-        ? (() => {
+    //
+    // ⚠️ Android custom scheme 禁令 (2023/10)：
+    //   Google 禁止 Android OAuth Client 使用自訂 URI scheme（如 mobile://）。
+    //   Web Application Client 的 redirect URI 也必須包含網域（不接受 mobile://）。
+    //   解法：使用已在 Google Console 註冊的 HTTPS URL 作為 redirect URI。
+    //   Chrome Custom Tabs 會在導航匹配時攔截回應，無須實際載入該頁面。
+    // 🔧 使用 useMemo 避免每次重繪重新計算 redirectUri + 產生重複 log
+    //    redirectUri 在整個 session 期間不會改變（取決於 window.location + Platform.OS）
+    const redirectUri = useMemo(() => {
+        if (Platform.OS === 'web') {
             // 使用當前頁面的 origin 作為 redirect URI 的基底
             const origin = typeof window !== 'undefined' ? window.location.origin : '';
             const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
@@ -609,19 +617,22 @@ export function useGoogleAuth() {
             const uri = origin + basePath + '/';
             console.info('[useGoogleAuth] Web redirectUri:', uri);
             return uri;
-        })()
-        : isExpoGo
+        }
+
+        if (isExpoGo) {
             // 📱 Expo Go：OAuth redirect 無法運作（auth.expo.io proxy 已棄用）
             // 仍然產生 redirect URI 以避免 useAuthRequest crash，
             // 但 signIn() 會提前放置並顯示錯誤訊息
-            ? (() => {
-                console.warn('[useGoogleAuth] Expo Go 不支援 OAuth，請使用 Development Build 或 APK');
-                return AuthSession.makeRedirectUri({ scheme: 'mobile' });
-            })()
-            // 📱 獨立 Build（APK/IPA）：使用 custom scheme
-            : AuthSession.makeRedirectUri({
-                scheme: 'mobile',
-            });
+            console.warn('[useGoogleAuth] Expo Go 不支援 OAuth，請使用 Development Build 或 APK');
+            return AuthSession.makeRedirectUri({ scheme: 'mobile' });
+        }
+
+        // 📱 獨立 Build（APK/IPA）：使用已註冊的 HTTPS redirect URI
+        // Chrome Custom Tabs 會在 Google redirect 時攔截回應，
+        // 不會實際載入此頁面，而是將 URL（含 ?code=xxx）回傳給 App。
+        // 此 URI 必須與 Google Cloud Console → Web Client → Authorized redirect URIs 完全一致。
+        return 'https://how-to-eat-ying0215s-projects.vercel.app/';
+    }, []);
 
     // ── Auth Request ──
     const [request, , promptAsync] = AuthSession.useAuthRequest(

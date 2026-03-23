@@ -167,6 +167,36 @@ describe('mergeStates — 基礎合併', () => {
     });
 });
 
+describe('mergeStates — 向後相容（舊版雲端資料遷移）', () => {
+    it('場景: 遠端資料無 groups，自動遷移至本地 activeGroupId', () => {
+        const local = makeState({
+            favorites: [],
+            queue: [],
+            _syncVersion: 1,
+        });
+        
+        // 刻意建立少了 groups 和相關新結構的遠端資料
+        const remote: any = {
+            favorites: [
+                { id: 'old1', name: '舊版餐廳', createdAt: '2025-01-01', updatedAt: '2025-03-14T00:00:00Z', isDeleted: false }
+            ],
+            queue: ['old1'],
+            currentDailyId: 'old1',
+            lastUpdateDate: '2025-03-14',
+            _syncVersion: 2,
+            _lastSyncedAt: '2025-03-14T00:00:00.000Z',
+            _deviceId: 'remote-device',
+        };
+
+        const merged = mergeStates(local, remote);
+
+        expect(merged.favorites).toHaveLength(1);
+        expect(merged.favorites[0].groupId).toBe(DEFAULT_GROUP_ID); // 繼承本地 DEFAULT_GROUP_ID
+        expect(merged.groupQueues[DEFAULT_GROUP_ID]).toContain('old1');
+        expect(merged.groupCurrentDailyIds[DEFAULT_GROUP_ID]).toBe('old1');
+    });
+});
+
 describe('mergeStates — Tombstone 軟刪除', () => {
     it('場景 4: 本地修改、遠端刪除，遠端更新 → 刪除獲勝', () => {
         // 使用相對近期的時間戳，避免被 7 天 TTL 清理掉

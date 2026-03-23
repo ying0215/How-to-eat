@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Modal, ScrollView, Pressable } from 'react-native';
 import { Button } from '../common/Button';
 import { theme } from '../../constants/theme';
+import type { ThemeColors } from '../../constants/theme';
+import { useThemeColors, useThemedStyles } from '../../contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { CATEGORY_LABELS } from '../../constants/categories';
 
@@ -32,11 +34,13 @@ export const FilterModal: React.FC<FilterModalProps> = ({
     onApply,
     initialFilters = {}
 }) => {
+    const colors = useThemeColors();
+    const styles = useThemedStyles((c) => createFilterStyles(c));
+
     const [selectedCategory, setSelectedCategory] = useState<string>(initialFilters.category || '全部');
     const [selectedDistance, setSelectedDistance] = useState<number | null>(initialFilters.maxDistance ?? null);
 
     // Bug #4 修正：當 Modal 重新打開時，同步 initialFilters 到內部 state
-    // 確保使用者看到的是上次套用的篩選條件，而非首次渲染的初始值
     useEffect(() => {
         if (visible) {
             setSelectedCategory(initialFilters.category || '全部');
@@ -72,7 +76,7 @@ export const FilterModal: React.FC<FilterModalProps> = ({
                             onPress={onClose}
                             style={({ pressed }) => pressed && { opacity: theme.interaction.pressedOpacity }}
                         >
-                            <Ionicons name="close" size={24} color={theme.colors.text} />
+                            <Ionicons name="close" size={24} color={colors.text} />
                         </Pressable>
                     </View>
 
@@ -120,9 +124,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
                                 </Pressable>
                             ))}
                         </View>
-
-                        {/* 價位考量未來可再擴充 */}
-
                     </ScrollView>
 
                     <View style={styles.footer}>
@@ -144,78 +145,80 @@ export const FilterModal: React.FC<FilterModalProps> = ({
     );
 };
 
-const styles = StyleSheet.create({
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: theme.colors.overlay,
-        justifyContent: 'flex-end',
-    },
-    modalContent: {
-        backgroundColor: theme.colors.surface,
-        borderTopLeftRadius: theme.borderRadius.xl,
-        borderTopRightRadius: theme.borderRadius.xl,
-        minHeight: '60%',
-        maxHeight: '90%',
-        paddingBottom: theme.spacing.xl, // Safe area for iOS
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: theme.spacing.lg,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border,
-    },
-    title: {
-        ...theme.typography.h3,
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-    },
-    scrollArea: {
-        padding: theme.spacing.lg,
-    },
-    sectionTitle: {
-        ...theme.typography.body,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-        marginBottom: theme.spacing.md,
-        marginTop: theme.spacing.sm,
-    },
-    chipContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.lg,
-    },
-    chip: {
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.full,
-        backgroundColor: theme.colors.background,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-    },
-    chipSelected: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
-    },
-    chipText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-    },
-    chipTextSelected: {
-        color: theme.colors.onPrimary,
-        fontWeight: 'bold',
-    },
-    footer: {
-        flexDirection: 'row',
-        padding: theme.spacing.lg,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border,
-        gap: theme.spacing.md,
-    },
-    footerButton: {
-        flex: 1,
-    }
-});
+function createFilterStyles(c: ThemeColors) {
+    return StyleSheet.create({
+        modalOverlay: {
+            flex: 1,
+            backgroundColor: c.overlay,
+            justifyContent: 'flex-end',
+        },
+        modalContent: {
+            backgroundColor: c.surface,
+            borderTopLeftRadius: theme.borderRadius.xl,
+            borderTopRightRadius: theme.borderRadius.xl,
+            minHeight: '60%',
+            maxHeight: '90%',
+            paddingBottom: theme.spacing.xl,
+        },
+        header: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: theme.spacing.lg,
+            borderBottomWidth: 1,
+            borderBottomColor: c.border,
+        },
+        title: {
+            ...theme.typography.h3,
+            fontSize: 20,
+            fontWeight: 'bold',
+            color: c.text,
+        },
+        scrollArea: {
+            padding: theme.spacing.lg,
+        },
+        sectionTitle: {
+            ...theme.typography.body,
+            fontWeight: 'bold',
+            color: c.text,
+            marginBottom: theme.spacing.md,
+            marginTop: theme.spacing.sm,
+        },
+        chipContainer: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: theme.spacing.sm,
+            marginBottom: theme.spacing.lg,
+        },
+        chip: {
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: theme.spacing.sm,
+            borderRadius: theme.borderRadius.full,
+            backgroundColor: c.background,
+            borderWidth: 1,
+            borderColor: c.border,
+        },
+        chipSelected: {
+            backgroundColor: c.primary,
+            borderColor: c.primary,
+        },
+        chipText: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+        },
+        chipTextSelected: {
+            color: c.onPrimary,
+            fontWeight: 'bold',
+        },
+        footer: {
+            flexDirection: 'row',
+            padding: theme.spacing.lg,
+            borderTopWidth: 1,
+            borderTopColor: c.border,
+            gap: theme.spacing.md,
+        },
+        footerButton: {
+            flex: 1,
+        },
+    });
+}

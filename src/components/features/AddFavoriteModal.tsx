@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 
 import { theme } from '../../constants/theme';
+import type { ThemeColors } from '../../constants/theme';
+import { useThemeColors, useThemedStyles } from '../../contexts/ThemeContext';
 import { useFavoriteStore } from '../../store/useFavoriteStore';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch';
 import { useLocation } from '../../hooks/useLocation';
@@ -33,6 +35,10 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
     const { addFavorite, findDuplicate } = useFavoriteStore();
     const { location } = useLocation();
     const { results: searchResults, loading: searchLoading, error: searchError, searchImmediate, clearResults } = usePlaceSearch();
+
+    // ── 動態主題 ──
+    const colors = useThemeColors();
+    const styles = useThemedStyles((c) => createAddModalStyles(c));
 
     // ── 狀態 ──
     const [addMode, setAddMode] = useState<'search' | 'manual' | 'paste'>('search');
@@ -268,44 +274,44 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
         <Modal visible={visible} transparent animationType="slide">
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={addModalStyles.overlay}
+                style={styles.overlay}
             >
-                <View style={[addModalStyles.content, { maxHeight: '85%' }]}>
-                    <Text style={addModalStyles.title}>新增最愛餐廳</Text>
+                <View style={[styles.content, { maxHeight: '85%' }]}>
+                    <Text style={styles.title}>新增最愛餐廳</Text>
 
                     {/* 模式切換 Tab */}
-                    <View style={addModalStyles.modeTabRow}>
+                    <View style={styles.modeTabRow}>
                         <Pressable
                             onPress={() => setAddMode('search')}
-                            style={[addModalStyles.modeTab, addMode === 'search' && addModalStyles.modeTabActive]}
+                            style={[styles.modeTab, addMode === 'search' && styles.modeTabActive]}
                         >
-                            <Ionicons name="search-outline" size={16} color={addMode === 'search' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                            <Text style={[addModalStyles.modeTabText, addMode === 'search' && addModalStyles.modeTabTextActive]}>搜尋餐廳</Text>
+                            <Ionicons name="search-outline" size={16} color={addMode === 'search' ? colors.onPrimary : colors.textSecondary} />
+                            <Text style={[styles.modeTabText, addMode === 'search' && styles.modeTabTextActive]}>搜尋餐廳</Text>
                         </Pressable>
                         <Pressable
                             onPress={() => setAddMode('manual')}
-                            style={[addModalStyles.modeTab, addMode === 'manual' && addModalStyles.modeTabActive]}
+                            style={[styles.modeTab, addMode === 'manual' && styles.modeTabActive]}
                         >
-                            <Ionicons name="pencil-outline" size={16} color={addMode === 'manual' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                            <Text style={[addModalStyles.modeTabText, addMode === 'manual' && addModalStyles.modeTabTextActive]}>手動輸入</Text>
+                            <Ionicons name="pencil-outline" size={16} color={addMode === 'manual' ? colors.onPrimary : colors.textSecondary} />
+                            <Text style={[styles.modeTabText, addMode === 'manual' && styles.modeTabTextActive]}>手動輸入</Text>
                         </Pressable>
                         <Pressable
                             onPress={() => setAddMode('paste')}
-                            style={[addModalStyles.modeTab, addMode === 'paste' && addModalStyles.modeTabActive]}
+                            style={[styles.modeTab, addMode === 'paste' && styles.modeTabActive]}
                         >
-                            <Ionicons name="link-outline" size={16} color={addMode === 'paste' ? theme.colors.onPrimary : theme.colors.textSecondary} />
-                            <Text style={[addModalStyles.modeTabText, addMode === 'paste' && addModalStyles.modeTabTextActive]}>貼上連結</Text>
+                            <Ionicons name="link-outline" size={16} color={addMode === 'paste' ? colors.onPrimary : colors.textSecondary} />
+                            <Text style={[styles.modeTabText, addMode === 'paste' && styles.modeTabTextActive]}>貼上連結</Text>
                         </Pressable>
                     </View>
 
                     {addMode === 'search' ? (
                         <>
-                            <Text style={addModalStyles.inputLabel}>餐廳名稱 *</Text>
-                            <View style={addModalStyles.searchRow}>
+                            <Text style={styles.inputLabel}>餐廳名稱 *</Text>
+                            <View style={styles.searchRow}>
                                 <TextInput
-                                    style={[addModalStyles.input, { flex: 1, marginBottom: 0 }]}
+                                    style={[styles.input, { flex: 1, marginBottom: 0 }]}
                                     placeholder="搜尋餐廳名稱（如：鼎泰豐）"
-                                    placeholderTextColor={theme.colors.textSecondary}
+                                    placeholderTextColor={colors.textSecondary}
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
                                     onSubmitEditing={handleSearch}
@@ -314,20 +320,20 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                                 />
                                 <Pressable
                                     onPress={handleSearch}
-                                    style={({ pressed }) => [addModalStyles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                                    style={({ pressed }) => [styles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
                                 >
-                                    <Ionicons name="search" size={20} color={theme.colors.onPrimary} />
+                                    <Ionicons name="search" size={20} color={colors.onPrimary} />
                                 </Pressable>
                             </View>
 
                             {searchLoading && (
-                                <View style={addModalStyles.searchStatusRow}>
-                                    <ActivityIndicator size="small" color={theme.colors.primary} />
-                                    <Text style={addModalStyles.searchStatusText}>搜尋中...</Text>
+                                <View style={styles.searchStatusRow}>
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                    <Text style={styles.searchStatusText}>搜尋中...</Text>
                                 </View>
                             )}
                             {searchError && (
-                                <Text style={addModalStyles.searchErrorText}>{searchError}</Text>
+                                <Text style={styles.searchErrorText}>{searchError}</Text>
                             )}
 
                             {searchResults.length > 0 && (
@@ -340,67 +346,67 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                                         return (
                                             <Pressable
                                                 onPress={() => setSelectedPlace(item)}
-                                                style={[addModalStyles.searchResultItem, isSelected && addModalStyles.searchResultItemSelected]}
+                                                style={[styles.searchResultItem, isSelected && styles.searchResultItemSelected]}
                                             >
                                                 <View style={{ flex: 1 }}>
-                                                    <Text style={addModalStyles.searchResultName}>{item.name}</Text>
-                                                    <Text style={addModalStyles.searchResultAddress}>{item.address}</Text>
-                                                    <View style={addModalStyles.searchResultMeta}>
-                                                        <Text style={addModalStyles.searchResultCategory}>{item.category}</Text>
+                                                    <Text style={styles.searchResultName}>{item.name}</Text>
+                                                    <Text style={styles.searchResultAddress}>{item.address}</Text>
+                                                    <View style={styles.searchResultMeta}>
+                                                        <Text style={styles.searchResultCategory}>{item.category}</Text>
                                                         {item.rating > 0 && (
-                                                            <Text style={addModalStyles.searchResultRating}>⭐ {item.rating.toFixed(1)}</Text>
+                                                            <Text style={styles.searchResultRating}>⭐ {item.rating.toFixed(1)}</Text>
                                                         )}
-                                                        <Text style={[addModalStyles.searchResultOpen, { color: item.isOpenNow ? theme.colors.success : theme.colors.error }]}>
+                                                        <Text style={[styles.searchResultOpen, { color: item.isOpenNow ? colors.success : colors.error }]}>
                                                             {item.isOpenNow ? '營業中' : '已打烊'}
                                                         </Text>
                                                     </View>
                                                 </View>
                                                 {isSelected && (
-                                                    <Ionicons name="checkmark-circle" size={24} color={theme.colors.primary} />
+                                                    <Ionicons name="checkmark-circle" size={24} color={colors.primary} />
                                                 )}
                                             </Pressable>
                                         );
                                     }}
-                                    ItemSeparatorComponent={() => <View style={addModalStyles.separator} />}
+                                    ItemSeparatorComponent={() => <View style={styles.separator} />}
                                 />
                             )}
 
                             {selectedPlace && (
-                                <View style={addModalStyles.selectedPreview}>
-                                    <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                    <Text style={addModalStyles.selectedPreviewText}>已選擇：{selectedPlace.name}</Text>
+                                <View style={styles.selectedPreview}>
+                                    <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                                    <Text style={styles.selectedPreviewText}>已選擇：{selectedPlace.name}</Text>
                                 </View>
                             )}
                         </>
                     ) : addMode === 'manual' ? (
                         <>
-                            <Text style={addModalStyles.inputLabel}>餐廳名稱 *</Text>
+                            <Text style={styles.inputLabel}>餐廳名稱 *</Text>
                             <TextInput
-                                style={addModalStyles.input}
+                                style={styles.input}
                                 placeholder="例如：鼎泰豐"
-                                placeholderTextColor={theme.colors.textSecondary}
+                                placeholderTextColor={colors.textSecondary}
                                 value={newName}
                                 onChangeText={setNewName}
                                 autoFocus
                             />
 
-                            <Text style={addModalStyles.inputLabel}>備註（選填）</Text>
+                            <Text style={styles.inputLabel}>備註（選填）</Text>
                             <TextInput
-                                style={addModalStyles.input}
+                                style={styles.input}
                                 placeholder="例如：推薦小籠包"
-                                placeholderTextColor={theme.colors.textSecondary}
+                                placeholderTextColor={colors.textSecondary}
                                 value={newNote}
                                 onChangeText={setNewNote}
                             />
                         </>
                     ) : (
                         <>
-                            <Text style={addModalStyles.inputLabel}>貼上 Google Maps 分享連結</Text>
-                            <View style={addModalStyles.searchRow}>
+                            <Text style={styles.inputLabel}>貼上 Google Maps 分享連結</Text>
+                            <View style={styles.searchRow}>
                                 <TextInput
-                                    style={[addModalStyles.input, { flex: 1, marginBottom: 0, minHeight: 44 }]}
-                                    placeholder="https://maps.app.goo.gl/...&#10;可貼上多個連結（每行一個）"
-                                    placeholderTextColor={theme.colors.textSecondary}
+                                    style={[styles.input, { flex: 1, marginBottom: 0, minHeight: 44 }]}
+                                    placeholder={"https://maps.app.goo.gl/...\n可貼上多個連結（每行一個）"}
+                                    placeholderTextColor={colors.textSecondary}
                                     value={pasteUrl}
                                     onChangeText={(text) => {
                                         setPasteUrl(text);
@@ -417,44 +423,44 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                                 />
                                 <Pressable
                                     onPress={handlePasteUrl}
-                                    style={({ pressed }) => [addModalStyles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                                    style={({ pressed }) => [styles.searchBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
                                     disabled={pasteLoading}
                                 >
                                     {pasteLoading ? (
-                                        <ActivityIndicator size="small" color={theme.colors.onPrimary} />
+                                        <ActivityIndicator size="small" color={colors.onPrimary} />
                                     ) : (
-                                        <Ionicons name="arrow-forward" size={20} color={theme.colors.onPrimary} />
+                                        <Ionicons name="arrow-forward" size={20} color={colors.onPrimary} />
                                     )}
                                 </Pressable>
                             </View>
 
                             {pasteLoading && (
-                                <View style={addModalStyles.searchStatusRow}>
-                                    <ActivityIndicator size="small" color={theme.colors.primary} />
-                                    <Text style={addModalStyles.searchStatusText}>解析連結中...</Text>
+                                <View style={styles.searchStatusRow}>
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                    <Text style={styles.searchStatusText}>解析連結中...</Text>
                                 </View>
                             )}
 
                             {pasteResult?.error && (
-                                <View style={addModalStyles.pasteErrorContainer}>
-                                    <Ionicons name="alert-circle-outline" size={18} color={theme.colors.error} />
-                                    <Text style={addModalStyles.searchErrorText}>{pasteResult.error}</Text>
+                                <View style={styles.pasteErrorContainer}>
+                                    <Ionicons name="alert-circle-outline" size={18} color={colors.error} />
+                                    <Text style={styles.searchErrorText}>{pasteResult.error}</Text>
                                 </View>
                             )}
 
                             {pasteResult?.restaurant && (
-                                <View style={addModalStyles.pasteResultPreview}>
-                                    <View style={addModalStyles.selectedPreview}>
-                                        <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
-                                        <Text style={addModalStyles.selectedPreviewText}>{pasteResult.restaurant.name}</Text>
+                                <View style={styles.pasteResultPreview}>
+                                    <View style={styles.selectedPreview}>
+                                        <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                                        <Text style={styles.selectedPreviewText}>{pasteResult.restaurant.name}</Text>
                                     </View>
-                                    <Text style={addModalStyles.pasteResultAddress}>📍 {pasteResult.restaurant.address}</Text>
-                                    <View style={addModalStyles.searchResultMeta}>
-                                        <Text style={addModalStyles.searchResultCategory}>{pasteResult.restaurant.category}</Text>
+                                    <Text style={styles.pasteResultAddress}>📍 {pasteResult.restaurant.address}</Text>
+                                    <View style={styles.searchResultMeta}>
+                                        <Text style={styles.searchResultCategory}>{pasteResult.restaurant.category}</Text>
                                         {pasteResult.restaurant.rating > 0 && (
-                                            <Text style={addModalStyles.searchResultRating}>⭐ {pasteResult.restaurant.rating.toFixed(1)}</Text>
+                                            <Text style={styles.searchResultRating}>⭐ {pasteResult.restaurant.rating.toFixed(1)}</Text>
                                         )}
-                                        <Text style={[addModalStyles.searchResultOpen, { color: pasteResult.restaurant.isOpenNow ? theme.colors.success : theme.colors.error }]}>
+                                        <Text style={[styles.searchResultOpen, { color: pasteResult.restaurant.isOpenNow ? colors.success : colors.error }]}>
                                             {pasteResult.restaurant.isOpenNow ? '營業中' : '已打烊'}
                                         </Text>
                                     </View>
@@ -463,11 +469,11 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
 
                             {pasteResult?.restaurant && (
                                 <>
-                                    <Text style={addModalStyles.inputLabel}>備註（選填）</Text>
+                                    <Text style={styles.inputLabel}>備註（選填）</Text>
                                     <TextInput
-                                        style={addModalStyles.input}
+                                        style={styles.input}
                                         placeholder="例如：朋友推薦"
-                                        placeholderTextColor={theme.colors.textSecondary}
+                                        placeholderTextColor={colors.textSecondary}
                                         value={newNote}
                                         onChangeText={setNewNote}
                                     />
@@ -475,10 +481,10 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                             )}
 
                             {batchResults && (
-                                <View style={addModalStyles.pasteResultPreview}>
-                                    <View style={addModalStyles.selectedPreview}>
-                                        <Ionicons name="layers-outline" size={18} color={theme.colors.primary} />
-                                        <Text style={[addModalStyles.selectedPreviewText, { color: theme.colors.primary }]}>
+                                <View style={styles.pasteResultPreview}>
+                                    <View style={styles.selectedPreview}>
+                                        <Ionicons name="layers-outline" size={18} color={colors.primary} />
+                                        <Text style={[styles.selectedPreviewText, { color: colors.primary }]}>
                                             偵測到 {batchResults.results.length} 個連結：{batchResults.successCount} 個成功、{batchResults.failedCount} 個失敗
                                         </Text>
                                     </View>
@@ -488,13 +494,13 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                                                 <Ionicons
                                                     name={r.restaurant ? 'checkmark-circle' : 'close-circle'}
                                                     size={16}
-                                                    color={r.restaurant ? theme.colors.success : theme.colors.error}
+                                                    color={r.restaurant ? colors.success : colors.error}
                                                 />
-                                                <Text style={[addModalStyles.searchResultName, { fontSize: 13, flex: 1 }]} numberOfLines={1}>
+                                                <Text style={[styles.searchResultName, { fontSize: 13, flex: 1 }]} numberOfLines={1}>
                                                     {r.restaurant ? r.restaurant.name : (r.error || '解析失敗')}
                                                 </Text>
                                                 {r.restaurant?.category && (
-                                                    <Text style={[addModalStyles.searchResultCategory, { fontSize: 11 }]}>{r.restaurant.category}</Text>
+                                                    <Text style={[styles.searchResultCategory, { fontSize: 11 }]}>{r.restaurant.category}</Text>
                                                 )}
                                             </View>
                                         ))}
@@ -505,16 +511,16 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                     )}
 
                     {/* 底部按鈕 */}
-                    <View style={addModalStyles.actions}>
+                    <View style={styles.actions}>
                         <Pressable
-                            style={({ pressed }) => [addModalStyles.btn, addModalStyles.cancelBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
+                            style={({ pressed }) => [styles.btn, styles.cancelBtn, pressed && { opacity: theme.interaction.pressedOpacity }]}
                             onPress={resetModal}
                         >
-                            <Text style={addModalStyles.cancelText}>取消</Text>
+                            <Text style={styles.cancelText}>取消</Text>
                         </Pressable>
                         <Pressable
                             style={({ pressed }) => [
-                                addModalStyles.btn, addModalStyles.confirmBtn,
+                                styles.btn, styles.confirmBtn,
                                 pressed && { opacity: theme.interaction.pressedOpacity },
                                 (addMode === 'search' && !selectedPlace) && { opacity: 0.4 },
                                 (addMode === 'paste' && !pasteResult?.restaurant && !batchResults) && { opacity: 0.4 },
@@ -531,7 +537,7 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
                                 || batchImporting
                             }
                         >
-                            <Text style={addModalStyles.confirmText}>
+                            <Text style={styles.confirmText}>
                                 {batchResults
                                     ? (batchImporting ? '匯入中...' : `全部新增 (${batchResults.successCount})`)
                                     : '確認新增'
@@ -545,197 +551,199 @@ export default function AddFavoriteModal({ visible, onClose, onAdded }: AddFavor
     );
 }
 
-const addModalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: theme.colors.overlay,
-        justifyContent: 'center',
-        padding: theme.spacing.lg,
-    },
-    content: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.borderRadius.lg,
-        padding: theme.spacing.xl,
-    },
-    title: {
-        ...theme.typography.h3,
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: theme.colors.text,
-        marginBottom: theme.spacing.lg,
-    },
-    modeTabRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.lg,
-    },
-    modeTab: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.background,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-    },
-    modeTabActive: {
-        backgroundColor: theme.colors.primary,
-        borderColor: theme.colors.primary,
-    },
-    modeTabText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        fontWeight: '600',
-    },
-    modeTabTextActive: {
-        color: theme.colors.onPrimary,
-    },
-    searchRow: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        alignItems: 'center',
-        marginBottom: theme.spacing.md,
-    },
-    searchBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    searchStatusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.sm,
-        marginBottom: theme.spacing.sm,
-    },
-    searchStatusText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-    },
-    searchErrorText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.error,
-        marginBottom: theme.spacing.sm,
-    },
-    searchResultItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-    },
-    searchResultItemSelected: {
-        backgroundColor: `${theme.colors.primary}12`,
-    },
-    searchResultName: {
-        ...theme.typography.body,
-        fontWeight: '600',
-        color: theme.colors.text,
-    },
-    searchResultAddress: {
-        ...theme.typography.caption,
-        color: theme.colors.textSecondary,
-        marginTop: 2,
-    },
-    searchResultMeta: {
-        flexDirection: 'row',
-        gap: theme.spacing.sm,
-        marginTop: 4,
-    },
-    searchResultCategory: {
-        ...theme.typography.caption,
-        color: theme.colors.primary,
-        fontWeight: '600',
-    },
-    searchResultRating: {
-        ...theme.typography.caption,
-        color: theme.colors.star,
-    },
-    searchResultOpen: {
-        ...theme.typography.caption,
-        fontWeight: '500',
-    },
-    selectedPreview: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        backgroundColor: `${theme.colors.success}12`,
-        paddingHorizontal: theme.spacing.md,
-        paddingVertical: theme.spacing.sm,
-        borderRadius: theme.borderRadius.md,
-        marginBottom: theme.spacing.md,
-    },
-    selectedPreviewText: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.success,
-        fontWeight: '600',
-    },
-    pasteErrorContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.spacing.xs,
-        marginBottom: theme.spacing.sm,
-        paddingHorizontal: theme.spacing.sm,
-    },
-    pasteResultPreview: {
-        backgroundColor: `${theme.colors.primary}08`,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        marginBottom: theme.spacing.md,
-        borderWidth: 1,
-        borderColor: `${theme.colors.primary}20`,
-    },
-    pasteResultAddress: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.sm,
-    },
-    inputLabel: {
-        ...theme.typography.bodySmall,
-        color: theme.colors.textSecondary,
-        marginBottom: theme.spacing.xs,
-    },
-    input: {
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.spacing.md,
-        ...theme.typography.body,
-        marginBottom: theme.spacing.md,
-        color: theme.colors.text,
-    },
-    separator: {
-        height: 1,
-        backgroundColor: theme.colors.border,
-    },
-    actions: {
-        flexDirection: 'row',
-        gap: theme.spacing.md,
-        marginTop: theme.spacing.sm,
-    },
-    btn: {
-        flex: 1,
-        paddingVertical: theme.spacing.md,
-        borderRadius: theme.borderRadius.md,
-        alignItems: 'center',
-    },
-    cancelBtn: {
-        backgroundColor: theme.colors.background,
-    },
-    cancelText: {
-        color: theme.colors.textSecondary,
-        fontWeight: '600',
-    },
-    confirmBtn: {
-        backgroundColor: theme.colors.primary,
-    },
-    confirmText: {
-        color: theme.colors.onPrimary,
-        fontWeight: '600',
-    },
-});
+function createAddModalStyles(c: ThemeColors) {
+    return StyleSheet.create({
+        overlay: {
+            flex: 1,
+            backgroundColor: c.overlay,
+            justifyContent: 'center',
+            padding: theme.spacing.lg,
+        },
+        content: {
+            backgroundColor: c.surface,
+            borderRadius: theme.borderRadius.lg,
+            padding: theme.spacing.xl,
+        },
+        title: {
+            ...theme.typography.h3,
+            fontSize: 20,
+            fontWeight: 'bold',
+            color: c.text,
+            marginBottom: theme.spacing.lg,
+        },
+        modeTabRow: {
+            flexDirection: 'row',
+            gap: theme.spacing.sm,
+            marginBottom: theme.spacing.lg,
+        },
+        modeTab: {
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 4,
+            paddingVertical: theme.spacing.sm,
+            borderRadius: theme.borderRadius.md,
+            backgroundColor: c.background,
+            borderWidth: 1,
+            borderColor: c.border,
+        },
+        modeTabActive: {
+            backgroundColor: c.primary,
+            borderColor: c.primary,
+        },
+        modeTabText: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+            fontWeight: '600',
+        },
+        modeTabTextActive: {
+            color: c.onPrimary,
+        },
+        searchRow: {
+            flexDirection: 'row',
+            gap: theme.spacing.sm,
+            alignItems: 'center',
+            marginBottom: theme.spacing.md,
+        },
+        searchBtn: {
+            width: 44,
+            height: 44,
+            borderRadius: theme.borderRadius.md,
+            backgroundColor: c.primary,
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        searchStatusRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.sm,
+            marginBottom: theme.spacing.sm,
+        },
+        searchStatusText: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+        },
+        searchErrorText: {
+            ...theme.typography.bodySmall,
+            color: c.error,
+            marginBottom: theme.spacing.sm,
+        },
+        searchResultItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingVertical: theme.spacing.md,
+            paddingHorizontal: theme.spacing.sm,
+            borderRadius: theme.borderRadius.md,
+        },
+        searchResultItemSelected: {
+            backgroundColor: `${c.primary}12`,
+        },
+        searchResultName: {
+            ...theme.typography.body,
+            fontWeight: '600',
+            color: c.text,
+        },
+        searchResultAddress: {
+            ...theme.typography.caption,
+            color: c.textSecondary,
+            marginTop: 2,
+        },
+        searchResultMeta: {
+            flexDirection: 'row',
+            gap: theme.spacing.sm,
+            marginTop: 4,
+        },
+        searchResultCategory: {
+            ...theme.typography.caption,
+            color: c.primary,
+            fontWeight: '600',
+        },
+        searchResultRating: {
+            ...theme.typography.caption,
+            color: c.star,
+        },
+        searchResultOpen: {
+            ...theme.typography.caption,
+            fontWeight: '500',
+        },
+        selectedPreview: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.xs,
+            backgroundColor: `${c.success}12`,
+            paddingHorizontal: theme.spacing.md,
+            paddingVertical: theme.spacing.sm,
+            borderRadius: theme.borderRadius.md,
+            marginBottom: theme.spacing.md,
+        },
+        selectedPreviewText: {
+            ...theme.typography.bodySmall,
+            color: c.success,
+            fontWeight: '600',
+        },
+        pasteErrorContainer: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: theme.spacing.xs,
+            marginBottom: theme.spacing.sm,
+            paddingHorizontal: theme.spacing.sm,
+        },
+        pasteResultPreview: {
+            backgroundColor: `${c.primary}08`,
+            borderRadius: theme.borderRadius.md,
+            padding: theme.spacing.md,
+            marginBottom: theme.spacing.md,
+            borderWidth: 1,
+            borderColor: `${c.primary}20`,
+        },
+        pasteResultAddress: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+            marginBottom: theme.spacing.sm,
+        },
+        inputLabel: {
+            ...theme.typography.bodySmall,
+            color: c.textSecondary,
+            marginBottom: theme.spacing.xs,
+        },
+        input: {
+            borderWidth: 1,
+            borderColor: c.border,
+            borderRadius: theme.borderRadius.md,
+            padding: theme.spacing.md,
+            ...theme.typography.body,
+            marginBottom: theme.spacing.md,
+            color: c.text,
+        },
+        separator: {
+            height: 1,
+            backgroundColor: c.border,
+        },
+        actions: {
+            flexDirection: 'row',
+            gap: theme.spacing.md,
+            marginTop: theme.spacing.sm,
+        },
+        btn: {
+            flex: 1,
+            paddingVertical: theme.spacing.md,
+            borderRadius: theme.borderRadius.md,
+            alignItems: 'center',
+        },
+        cancelBtn: {
+            backgroundColor: c.background,
+        },
+        cancelText: {
+            color: c.textSecondary,
+            fontWeight: '600',
+        },
+        confirmBtn: {
+            backgroundColor: c.primary,
+        },
+        confirmText: {
+            color: c.onPrimary,
+            fontWeight: '600',
+        },
+    });
+}

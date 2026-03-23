@@ -11,10 +11,13 @@
 //   4. 離線時標記 pendingSync，網路恢復後自動同步
 //
 // 同步觸發時機：
-//   - 使用者修改最愛清單後 debounce 2 秒
-//   - App 從背景回到前景
-//   - 手動觸發同步
+//   - App 從背景回到前景（若有 pendingSync）
+//   - 手動觸發「立即同步」
 //   - 網路從離線恢復為在線（若有 pendingSync）
+//   - 首次登入 Google 帳號
+//
+// 注意：使用者操作（新增/刪除/修改）僅標記 pendingSync，
+//       不會即時觸發同步，降低 API 呼叫與電量消耗。
 // ============================================================================
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -351,11 +354,11 @@ export async function performSync(
 ): Promise<boolean> {
     const syncMeta = useSyncMetaStore.getState();
 
-    // 前置檢查
+    // 前置檢查（同步鏈路）
     if (!syncMeta.syncEnabled) return false;
     if (syncMeta.syncStatus === 'syncing') return false; // 防止並發同步
 
-    // 網路連線檢查
+    // 網路連線檢查（同步，不需要設定 syncing）
     if (!getNetworkStatus()) {
         syncMeta._setSyncError('目前處於離線狀態，待恢復連線後自動同步。');
         syncMeta._markPending();
@@ -364,13 +367,17 @@ export async function performSync(
         return false;
     }
 
+    // 🔒 立即設定 syncing 狀態，關閉並發競爭窗口
+    // 必須在 await getToken() 之前設定，否則兩個同時觸發的 performSync()
+    // 都能通過上方的 'syncing' 檢查，導致重複請求觸發限流保護。
+    syncMeta._setSyncing();
+
     const token = await getToken();
     if (!token) {
+        // getToken 失敗時，_setSyncError 會將 syncStatus 從 'syncing' 改為 'error'
         syncMeta._setSyncError('無法取得 Google 授權，請重新登入。');
         return false;
     }
-
-    syncMeta._setSyncing();
 
     try {
         // 確保 deviceId 已初始化
@@ -566,8 +573,7 @@ export async function pullFromCloud(
 // 🎣 useSyncOrchestrator — React Hook 版同步排程器
 // ---------------------------------------------------------------------------
 
-/** Debounce 延遲（毫秒） */
-const SYNC_DEBOUNCE_MS = 2000;
+
 
 /** 同步成功後回到 idle 的延遲 */
 const SUCCESS_RESET_MS = 3000;
@@ -576,9 +582,10 @@ const SUCCESS_RESET_MS = 3000;
  * 同步排程器 Hook。
  *
  * 負責：
- *   1. 監聽 useFavoriteStore 變化，debounce 後觸發同步
+ *   1. 監聽 useFavoriteStore 變化，標記 pendingSync（不即時同步）
  *   2. 監聽 AppState 變化，App 回到前景時觸發同步
- *   3. 提供手動同步方法
+ *   3. 監聽網路恢復，若有 pendingSync 自動同步
+ *   4. 提供手動同步方法（立即同步）
  *
  * 使用方式：在 App 根佈局（_layout.tsx）中呼叫一次即可。
  *
@@ -587,7 +594,7 @@ const SUCCESS_RESET_MS = 3000;
 export function useSyncOrchestrator(
     getToken: () => Promise<string | null>,
 ) {
-    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const successResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isSignedIn = useGoogleAuthStore((s) => s.isSignedIn);
     const syncStatus = useSyncMetaStore((s) => s.syncStatus);
@@ -607,29 +614,23 @@ export function useSyncOrchestrator(
         }
     }, [isSignedIn, syncEnabled, getToken]);
 
-    // ── 監聽 FavoriteStore 變化 → debounce 同步 ──
+    // ── 監聽 FavoriteStore 變化 → 僅標記待同步（不即時觸發） ──
+    // 同步延遲到下次 App 回到前景、手動觸發、網路恢復或首次登入時執行
     useEffect(() => {
         if (!isSignedIn || !syncEnabled) return;
 
         const unsubscribe = useFavoriteStore.subscribe(() => {
-            // 🛡️ 如果是同步寫回觸發的變更，不再重新同步
+            // 🛡️ 如果是同步寫回觸發的變更，不再標記
             if (isSyncWriteback()) return;
 
-            // 標記待同步
+            // 標記待同步（實際同步延遲到下次 App 啟動 / 手動觸發）
             useSyncMetaStore.getState()._markPending();
-
-            // 重設 debounce 計時器
-            if (debounceRef.current) clearTimeout(debounceRef.current);
-            debounceRef.current = setTimeout(() => {
-                triggerSync();
-            }, SYNC_DEBOUNCE_MS);
         });
 
         return () => {
             unsubscribe();
-            if (debounceRef.current) clearTimeout(debounceRef.current);
         };
-    }, [isSignedIn, syncEnabled, triggerSync]);
+    }, [isSignedIn, syncEnabled]);
 
     // ── 監聽 App 回到前景 → 觸發同步 ──
     useEffect(() => {
@@ -674,10 +675,21 @@ export function useSyncOrchestrator(
     }, [isConnected, isSignedIn, syncEnabled, triggerSync]);
 
     // ── 首次登入時立即同步一次 ──
+    // 🔧 isInitialMountRef 區分「真正的首次登入」與「App 重啟 token 恢復」
+    //    App 重啟時 useGoogleAuth 會用 SecureStore 中的 refresh token 恢復 isSignedIn，
+    //    此時 isSignedIn 從 false → true，但這不是使用者主動登入，不應觸發立即同步。
+    //    同步會在使用者下次切換 App（AppState → active）或手動觸發時自然發生。
+    const isInitialMountRef = useRef(true);
     const prevSignedInRef = useRef(isSignedIn);
     useEffect(() => {
+        if (isInitialMountRef.current) {
+            // 首次掛載：記錄初始狀態，不觸發同步
+            isInitialMountRef.current = false;
+            prevSignedInRef.current = isSignedIn;
+            return;
+        }
         if (isSignedIn && !prevSignedInRef.current && syncEnabled) {
-            // 剛從未登入 → 已登入
+            // 剛從未登入 → 已登入（使用者主動登入）
             triggerSync();
         }
         prevSignedInRef.current = isSignedIn;
@@ -686,7 +698,6 @@ export function useSyncOrchestrator(
     // ── Cleanup ──
     useEffect(() => {
         return () => {
-            if (debounceRef.current) clearTimeout(debounceRef.current);
             if (successResetRef.current) clearTimeout(successResetRef.current);
         };
     }, []);
