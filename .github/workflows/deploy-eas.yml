@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 1. 取得最新程式碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 2. 設定 Node 環境
         uses: actions/setup-node@v4
