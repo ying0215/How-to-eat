@@ -1,0 +1,75 @@
+name: 🐛 Bug Report
+description: 回報問題或非預期的行為
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝你花時間回報 Bug！請盡量填寫以下資訊，幫助我們快速定位問題。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 問題描述
+      description: 請清楚描述遇到的問題
+      placeholder: 例如：點擊「隨機抽取」按鈕後，App 閃退...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟
+      description: 請提供逐步操作步驟
+      placeholder: |
+        1. 開啟 App
+        2. 前往「最愛抽獎」頁面
+        3. 點擊「抽獎」按鈕
+        4. 出現錯誤
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 預期行為
+      description: 你預期應該發生什麼？
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 實際行為
+      description: 實際上發生了什麼？
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 使用平台
+      options:
+        - Android
+        - iOS
+        - Web
+        - 所有平台
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境資訊
+      description: 請提供裝置/瀏覽器資訊
+      placeholder: |
+        - 裝置：Pixel 8 / iPhone 15 / Chrome 120
+        - OS：Android 14 / iOS 17.4 / Windows 11
+        - App 版本：1.0.0
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截圖或錄影
+      description: 如有相關截圖或錄影，請貼上

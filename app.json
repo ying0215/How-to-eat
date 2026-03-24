@@ -1,11 +1,12 @@
 {
   "expo": {
     "name": "How-to-eat",
-    "slug": "mobile",
+    "slug": "how-to-eat",
+    "description": "每天最大的煩惱，交給我來解決。從最愛清單隨機推薦、GPS 附近美食搜尋、Google Drive 雲端同步。",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "how-to-eat",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -45,7 +46,8 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": true,
+      "baseUrl": "/How-to-eat"
     },
     "extra": {
       "router": {},

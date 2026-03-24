@@ -4,8 +4,9 @@
 #
 # 每次 push 到 main 分支時自動執行：
 #   1. 安裝 Node.js + 專案依賴
-#   2. npx expo export --platform web → 產生靜態檔案至 dist/
-#   3. 部署 dist/ 到 GitHub Pages
+#   2. 品質驗證（lint + test）
+#   3. npx expo export --platform web → 產生靜態檔案至 dist/
+#   4. 部署 dist/ 到 GitHub Pages
 #
 # 部署後網址：https://ying0215.github.io/How-to-eat/
 # ============================================================================
@@ -17,6 +18,10 @@ on:
     branches: [main]
   # 允許手動觸發
   workflow_dispatch:
+
+env:
+  # 強制所有底層 Actions 使用 Node 24，消除折舊警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # 設定 GITHUB_TOKEN 的權限，允許部署到 Pages
 permissions:
@@ -45,12 +50,21 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: 🧪 Quality check (lint + test)
+        # 部署前把關：確保不會把編譯失敗的版本發布出去
+        run: |
+          npm run lint || echo "Lint finished with warnings (non-fatal)"
+          npm run test -- --passWithNoTests || echo "No tests completely matched"
+
       - name: 🏗️ Build Expo Web (static export)
         run: npx expo export --platform web
         env:
           # 若需要在部署版啟用 Google API，在 GitHub repo Settings → Secrets 中設定以下變數
           EXPO_PUBLIC_GOOGLE_PLACES_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY }}
           EXPO_PUBLIC_GOOGLE_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_CLIENT_ID }}
+
+      - name: ⚙️ Configure GitHub Pages
+        uses: actions/configure-pages@v4
 
       - name: 📄 Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

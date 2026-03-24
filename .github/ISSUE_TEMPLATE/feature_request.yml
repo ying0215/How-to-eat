@@ -1,0 +1,53 @@
+name: ✨ Feature Request
+description: 提出新功能建議或改善想法
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝你的建議！好的想法讓 App 更好用 🍽️
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解決什麼問題？
+      description: 請描述你遇到的困擾，或你希望改善的使用情境
+      placeholder: 例如：每次都要手動輸入餐廳名稱很麻煩...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 你希望怎麼做？
+      description: 描述你理想中的解決方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 其他替代方案
+      description: 你有考慮過其他作法嗎？
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影響範圍
+      options:
+        - 🎲 最愛抽獎
+        - 📍 附近美食
+        - ❤️ 最愛清單
+        - ⚙️ 偏好設定
+        - ☁️ 雲端同步
+        - 🎨 UI / 外觀
+        - 📱 全域 / 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: mockup
+    attributes:
+      label: 設計草圖（選填）
+      description: 如果有畫面/流程的草圖，請貼上

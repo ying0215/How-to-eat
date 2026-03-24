@@ -603,7 +603,7 @@ export function useGoogleAuth() {
             const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
 
             // Localhost 環境：不需要子路徑，直接使用 origin + /
-            // 部署環境（GitHub Pages / Vercel 等）：需要保留第一層路徑（如 /How-to-eat/）
+            // 部署環境（GitHub Pages 等）：需要保留第一層路徑（如 /How-to-eat/）
             const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
             let basePath: string;
             if (isLocalhost) {
@@ -631,7 +631,7 @@ export function useGoogleAuth() {
         // Chrome Custom Tabs 會在 Google redirect 時攔截回應，
         // 不會實際載入此頁面，而是將 URL（含 ?code=xxx）回傳給 App。
         // 此 URI 必須與 Google Cloud Console → Web Client → Authorized redirect URIs 完全一致。
-        return 'https://how-to-eat-ying0215s-projects.vercel.app/';
+        return 'https://ying0215.github.io/How-to-eat/';
     }, []);
 
     // ── Auth Request ──
