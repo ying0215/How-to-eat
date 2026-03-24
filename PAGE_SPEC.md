@@ -5,8 +5,8 @@
 scope: 頁面 UI 結構、按鈕邏輯、組件設計規範
 ssot_for: UI 區塊 / 按鈕 ID 與行為 / 組件 Props / 視覺規範
 not_covered: 模組職責、Store Schema、Data Flow → 見 ARCHITECTURE.md
-version: v1.6
-updated: 2026-03-23
+version: v1.7
+updated: 2026-03-24
 ```
 
 ---
@@ -175,6 +175,7 @@ flowchart TD
 | 自訂 Header | ← 返回 + 「偏好設定」 |
 | ☁️ 雲端同步 | 帳號連結 / 同步 Badge / 自動同步 Toggle / 手動同步 / 取消連結 |
 | 📄 資料管理 | **獨立區塊（不需登入）**：匯出 JSON + 匯入 JSON + 餐廳數量 |
+| 🎨 外觀主題 | 三選一 Radio Card：☀️ 淺色(Light) / 🌙 深色(Dark) / 📱 跟隨系統(System)。下方提示文字隨選擇動態更新 |
 | 交通方式 | Radio Card：🚶 走路 / 🚗 機車 / 🚌 大眾運輸 |
 | 時間限制 | ➖/➕ + 進度條，5–60 分鐘，步進 5 |
 
@@ -194,6 +195,9 @@ flowchart TD
 | B5-10 | 📥 匯入餐廳 | `secondary` | `pickAndReadFavoritesFile()` → 驗證 → Alert → `applyImportToStore()` |
 | B5-11 | ➖ 減少時間 | `icon` | `maxTimeMins - 5`，disabled: ≤ 5 |
 | B5-12 | ➕ 增加時間 | `icon` | `maxTimeMins + 5`，disabled: ≥ 60 |
+| B5-13 | ☀️ 淺色 | `radio` card | `setThemeMode('light')` |
+| B5-14 | 🌙 深色 | `radio` card | `setThemeMode('dark')` |
+| B5-15 | 📱 跟隨系統 | `radio` card | `setThemeMode('system')` |
 
 **State Logic**
 
@@ -221,7 +225,7 @@ flowchart TD
 | 區塊 | 描述 |
 |---|---|
 | Header | ← 返回 + 「功能清單」 |
-| 帳號卡片 | 登入：Avatar + 名/Email + Badge + 登出；未登入：CTA → P5 |
+| 帳號卡片 | 登入：Avatar + 名/Email + Badge + 登出；未登入：嵌入式 Google CTA（含功能說明 + signIn 按鈕） |
 | MenuItem 列表 | ❤️ 最愛清單 / ⚙️ 偏好設定 |
 | Footer | 版本資訊 |
 
@@ -233,7 +237,7 @@ flowchart TD
 | B6-2 | ❤️ 最愛清單 | MenuItem | `Link href="/favorites"` → P4a |
 | B6-3 | ⚙️ 偏好設定 | MenuItem | `Link href="/settings"` → P5 |
 | B6-4 | 🚪 登出 | `danger` | Alert → `signOut()` |
-| B6-5 | ☁️ 連結 Google | CTA card | `Link href="/settings"` → P5 |
+| B6-5 | ☁️ 連結 Google | CTA card (嵌入式) | 直接調用 `signIn()`（非導航至 P5） |
 
 **MenuItem 結構**
 
@@ -345,4 +349,4 @@ interface RestaurantCardProps {
 
 ---
 
-*文件由 Antigravity AI 輔助生成，請隨功能迭代同步更新。*
+*文件由 Antigravity AI 輔助生成，請隨功能迭代同步更新。v1.7 — 2026-03-24*

@@ -30,6 +30,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '../../src/constants/theme';
 import type { ThemeColors, ThemeShadows } from '../../src/constants/theme';
 import { useThemeColors, useThemeShadows, useThemedStyles } from '../../src/contexts/ThemeContext';
+import { PageHeader } from '../../src/components/common/PageHeader';
 import { useFavoriteStore, FavoriteRestaurant } from '../../src/store/useFavoriteStore';
 import { useUserStore } from '../../src/store/useUserStore';
 import { useMapJump } from '../../src/hooks/useMapJump';
@@ -171,14 +172,10 @@ export default function GroupDetailScreen() {
     if (!group) {
         return (
             <View style={styles.screenContainer}>
-                <HeaderBar
+                <PageHeader
                     title="群組不存在"
-                    isEditing={false}
                     onBack={handleBack}
-                    onToggleEdit={() => {}}
-                    hideEdit
-                    colors={colors}
-                    styles={styles}
+                    hideRight
                 />
                 <View style={styles.emptyContainer}>
                     <Ionicons name="alert-circle-outline" size={72} color={colors.error + '80'} />
@@ -201,16 +198,11 @@ export default function GroupDetailScreen() {
     if (groupFavorites.length === 0) {
         return (
             <View style={styles.screenContainer}>
-                <HeaderBar
+                <PageHeader
                     title={group.name}
-                    isEditing={false}
                     onBack={handleBack}
-                    onToggleEdit={() => {}}
-                    hideEdit
-                    colors={colors}
-                    styles={styles}
+                    hideRight
                 />
-                <View style={styles.divider} />
                 <View style={styles.emptyContainer}>
                     <View style={styles.emptyIconWrap}>
                         <Ionicons name="heart-outline" size={72} color={colors.primary + '80'} />
@@ -247,15 +239,14 @@ export default function GroupDetailScreen() {
     return (
         <View style={styles.screenContainer}>
             {/* ── 1. Header ── */}
-            <HeaderBar
+            <PageHeader
                 title={group.name}
-                isEditing={isEditing}
                 onBack={handleBack}
-                onToggleEdit={() => setIsEditing((v) => !v)}
-                colors={colors}
-                styles={styles}
+                rightIcon={isEditing ? 'checkmark-outline' : 'create-outline'}
+                rightLabel={isEditing ? '完成' : '編輯'}
+                rightColor={isEditing ? colors.success : colors.primary}
+                onRightPress={() => setIsEditing((v) => !v)}
             />
-            <View style={styles.divider} />
 
             {/* ── 2. Card List ── */}
             {isEditing ? (
@@ -355,57 +346,6 @@ export default function GroupDetailScreen() {
 interface SubCompProps {
     colors: ThemeColors;
     styles: ReturnType<typeof createGroupDetailStyles>;
-}
-
-// ── Header Bar ──
-function HeaderBar({
-    title,
-    isEditing,
-    onBack,
-    onToggleEdit,
-    hideEdit,
-    colors,
-    styles,
-}: {
-    title: string;
-    isEditing: boolean;
-    onBack: () => void;
-    onToggleEdit: () => void;
-    hideEdit?: boolean;
-} & SubCompProps) {
-    return (
-        <View style={styles.customHeader}>
-            <Pressable
-                onPress={onBack}
-                hitSlop={12}
-                style={({ pressed }) => [styles.backButton, pressed && { opacity: 0.6 }]}
-            >
-                <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
-                <Text style={styles.backText}>返回</Text>
-            </Pressable>
-
-            <Text style={styles.customHeaderTitle} numberOfLines={1}>{title}</Text>
-
-            {hideEdit ? (
-                <View style={styles.headerSpacer} />
-            ) : (
-                <Pressable
-                    onPress={onToggleEdit}
-                    hitSlop={12}
-                    style={({ pressed }) => [styles.headerActionBtn, pressed && { opacity: 0.6 }]}
-                >
-                    <Ionicons
-                        name={isEditing ? 'checkmark-outline' : 'create-outline'}
-                        size={20}
-                        color={isEditing ? colors.success : colors.primary}
-                    />
-                    <Text style={[styles.headerActionText, isEditing && { color: colors.success }]}>
-                        {isEditing ? '完成' : '編輯'}
-                    </Text>
-                </Pressable>
-            )}
-        </View>
-    );
 }
 
 // ── Normal Card（一般模式）──
@@ -714,52 +654,6 @@ function createGroupDetailStyles(c: ThemeColors, s: ThemeShadows) {
             flex: 1,
             backgroundColor: c.background,
             paddingTop: Platform.OS === 'web' ? 16 : 52,
-        },
-
-        // ── Header ──
-        customHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            paddingHorizontal: theme.spacing.md,
-            paddingBottom: theme.spacing.md,
-        },
-        customHeaderTitle: {
-            ...theme.typography.h2,
-            color: c.text,
-            flex: 1,
-            textAlign: 'center',
-        },
-        backButton: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.xs,
-            width: 80,
-        },
-        backText: {
-            ...theme.typography.body,
-            color: c.primary,
-            fontWeight: '500',
-        },
-        headerSpacer: {
-            width: 80,
-        },
-        headerActionBtn: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.xs,
-            width: 80,
-            justifyContent: 'flex-end',
-        },
-        headerActionText: {
-            ...theme.typography.body,
-            color: c.primary,
-            fontWeight: '500',
-        },
-        divider: {
-            height: 1,
-            backgroundColor: c.border,
-            marginHorizontal: theme.spacing.md,
         },
 
         // ── Card List ──

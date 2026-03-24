@@ -30,6 +30,7 @@ import { useRouter } from 'expo-router';
 import { theme } from '../../src/constants/theme';
 import type { ThemeColors, ThemeShadows } from '../../src/constants/theme';
 import { useThemeColors, useThemeShadows, useThemedStyles } from '../../src/contexts/ThemeContext';
+import { PageHeader } from '../../src/components/common/PageHeader';
 import { useFavoriteStore, FavoriteGroup, MAX_GROUPS } from '../../src/store/useFavoriteStore';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -237,19 +238,7 @@ export default function FavoritesGroupListScreen() {
     return (
         <View style={styles.screenContainer}>
             {/* ── Header ── */}
-            <View style={styles.customHeader}>
-                <Pressable
-                    onPress={handleBack}
-                    hitSlop={12}
-                    style={({ pressed }) => [styles.backButton, pressed && { opacity: 0.6 }]}
-                >
-                    <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
-                    <Text style={styles.backText}>返回</Text>
-                </Pressable>
-                <Text style={styles.customHeaderTitle}>最愛清單</Text>
-                <View style={styles.headerSpacer} />
-            </View>
-            <View style={styles.divider} />
+            <PageHeader title="最愛清單" onBack={handleBack} />
 
             {/* ── 群組列表說明 ── */}
             <View style={styles.sectionHint}>
@@ -428,38 +417,6 @@ function createFavGroupStyles(c: ThemeColors, s: ThemeShadows) {
             flex: 1,
             backgroundColor: c.background,
             paddingTop: Platform.OS === 'web' ? 16 : 52,
-        },
-
-        // ── Header ──
-        customHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            paddingHorizontal: theme.spacing.md,
-            paddingBottom: theme.spacing.md,
-        },
-        customHeaderTitle: {
-            ...theme.typography.h2,
-            color: c.text,
-        },
-        backButton: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.xs,
-            width: 80,
-        },
-        backText: {
-            ...theme.typography.body,
-            color: c.primary,
-            fontWeight: '500',
-        },
-        headerSpacer: {
-            width: 80,
-        },
-        divider: {
-            height: 1,
-            backgroundColor: c.border,
-            marginHorizontal: theme.spacing.md,
         },
 
         // ── Section Hint ──

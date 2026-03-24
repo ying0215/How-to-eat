@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { PageHeader } from '../src/components/common/PageHeader';
 import { theme } from '../src/constants/theme';
 import type { ThemeColors, ThemeShadows, ThemeMode } from '../src/constants/theme';
 import { useThemeColors, useThemeShadows, useThemedStyles } from '../src/contexts/ThemeContext';
@@ -98,7 +99,7 @@ function SyncBadge({ status }: { status: SyncStatus }) {
     const colors = useThemeColors();
     const d = getSyncDisplay(status, colors);
     const syncBadgeSt = useThemedStyles((c) => StyleSheet.create({
-        badge: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4, paddingHorizontal: theme.spacing.sm, paddingVertical: 4, borderRadius: theme.borderRadius.full, backgroundColor: c.background },
+        badge: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: theme.spacing.xs, paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs, borderRadius: theme.borderRadius.full, backgroundColor: c.background },
         badgeText: { ...theme.typography.caption, fontSize: 11, fontWeight: '600' as const },
     }));
     return (
@@ -258,15 +259,7 @@ export default function SettingsScreen() {
     return (
         <View style={styles.screenContainer}>
             {/* Header */}
-            <View style={styles.customHeader}>
-                <Pressable onPress={handleBack} hitSlop={12} style={({ pressed }) => [styles.backButton, pressed && { opacity: 0.6 }]}>
-                    <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
-                    <Text style={styles.backText}>返回</Text>
-                </Pressable>
-                <Text style={styles.customHeaderTitle}>偏好設定</Text>
-                <View style={styles.headerSpacer} />
-            </View>
-            <View style={styles.divider} />
+            <PageHeader title="偏好設定" onBack={handleBack} titleVariant="h3" />
 
             <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
                 {/* Google 雲端同步 */}
@@ -611,12 +604,6 @@ export default function SettingsScreen() {
 function createMainStyles(c: ThemeColors, s: ThemeShadows) {
     return StyleSheet.create({
         screenContainer: { flex: 1, backgroundColor: c.background, paddingTop: Platform.OS === 'web' ? 16 : 52 },
-        customHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.md, paddingBottom: theme.spacing.md },
-        customHeaderTitle: { ...theme.typography.h3, color: c.text },
-        backButton: { flexDirection: 'row', alignItems: 'center', gap: 4, width: 80 },
-        backText: { ...theme.typography.body, color: c.primary, fontWeight: '500' },
-        headerSpacer: { width: 80 },
-        divider: { height: 1, backgroundColor: c.border, marginHorizontal: theme.spacing.md, marginBottom: theme.spacing.sm + 4 },
         container: { flex: 1, backgroundColor: c.background },
         scrollContent: { padding: theme.spacing.lg },
         section: { backgroundColor: c.surface, borderRadius: theme.borderRadius.md, padding: theme.spacing.lg, marginBottom: theme.spacing.lg, ...s.sm },
@@ -632,7 +619,7 @@ function createMainStyles(c: ThemeColors, s: ThemeShadows) {
         sliderValue: { ...theme.typography.h2, color: c.text, marginBottom: theme.spacing.sm },
         progressTrack: { width: '100%', height: 8, borderRadius: 4, backgroundColor: c.border, overflow: 'hidden' },
         progressFill: { height: '100%', borderRadius: 4, backgroundColor: c.primary },
-        sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 4 },
+        sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: theme.spacing.xs },
         sliderLabel: { ...theme.typography.caption, fontSize: 11, color: c.textSecondary },
     });
 }
@@ -672,7 +659,7 @@ function createSyncStyles(c: ThemeColors) {
         networkDot: { width: 8, height: 8, borderRadius: 4 },
         networkDotOnline: { backgroundColor: c.success },
         networkDotOffline: { backgroundColor: c.error },
-        pendingBadge: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, backgroundColor: c.primary + '10', paddingHorizontal: theme.spacing.sm, paddingVertical: 4, borderRadius: theme.borderRadius.sm, marginBottom: theme.spacing.xs },
+        pendingBadge: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, backgroundColor: c.primary + '10', paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs, borderRadius: theme.borderRadius.sm, marginBottom: theme.spacing.xs },
         pendingText: { ...theme.typography.caption, fontSize: 12, color: c.primary, fontWeight: '500' },
         promoBox: { alignItems: 'center', paddingVertical: theme.spacing.lg, paddingHorizontal: theme.spacing.md },
         promoTitle: { ...theme.typography.h3, color: c.text, textAlign: 'center', marginBottom: theme.spacing.sm },
@@ -685,35 +672,36 @@ function createSyncStyles(c: ThemeColors) {
     });
 }
 
+/**
+ * 共用 Radio Group 樣式工廠 — Transport Mode 與 Theme Picker 共享
+ * 抽出相同的 radio card 視覺結構（optionsContainer, optionCard, radioIndicator,
+ * iconCircle, optionLabel, optionSublabel），避免 ~30 行重複程式碼。
+ */
+function createRadioGroupStyles(c: ThemeColors) {
+    return {
+        optionsContainer: { flexDirection: 'row' as const, gap: theme.spacing.sm },
+        optionCard: { flex: 1, alignItems: 'center' as const, paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm, borderRadius: theme.borderRadius.md, borderWidth: 2, borderColor: c.border, backgroundColor: c.background, position: 'relative' as const },
+        optionCardActive: { borderColor: c.primary, backgroundColor: c.primary + '0D' },
+        radioIndicator: { position: 'absolute' as const, top: 8, right: 8, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: c.border, backgroundColor: c.surface, justifyContent: 'center' as const, alignItems: 'center' as const },
+        radioIndicatorActive: { borderColor: c.primary, backgroundColor: c.primary },
+        iconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: c.border + '80', justifyContent: 'center' as const, alignItems: 'center' as const, marginBottom: theme.spacing.sm, marginTop: theme.spacing.xs },
+        iconCircleActive: { backgroundColor: c.primary + '1A' },
+        optionLabel: { ...theme.typography.bodySmall, fontWeight: '600' as const, color: c.textSecondary, textAlign: 'center' as const },
+        optionLabelActive: { color: c.text },
+        optionSublabel: { ...theme.typography.caption, color: c.textSecondary, marginTop: 2, textAlign: 'center' as const },
+        optionSublabelActive: { color: c.primary, fontWeight: '500' as const },
+    };
+}
+
 function createTransportStyles(c: ThemeColors) {
     return StyleSheet.create({
-        optionsContainer: { flexDirection: 'row', gap: theme.spacing.sm },
-        optionCard: { flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm, borderRadius: theme.borderRadius.md, borderWidth: 2, borderColor: c.border, backgroundColor: c.background, position: 'relative' },
-        optionCardActive: { borderColor: c.primary, backgroundColor: c.primary + '0D' },
-        radioIndicator: { position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: c.border, backgroundColor: c.surface, justifyContent: 'center', alignItems: 'center' },
-        radioIndicatorActive: { borderColor: c.primary, backgroundColor: c.primary },
-        iconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: c.border + '80', justifyContent: 'center', alignItems: 'center', marginBottom: theme.spacing.sm, marginTop: theme.spacing.xs },
-        iconCircleActive: { backgroundColor: c.primary + '1A' },
-        optionLabel: { ...theme.typography.bodySmall, fontWeight: '600', color: c.textSecondary, textAlign: 'center' },
-        optionLabelActive: { color: c.text },
-        optionSublabel: { ...theme.typography.caption, color: c.textSecondary, marginTop: 2, textAlign: 'center' },
-        optionSublabelActive: { color: c.primary, fontWeight: '500' },
+        ...createRadioGroupStyles(c),
     });
 }
 
 function createThemePickerStyles(c: ThemeColors) {
     return StyleSheet.create({
-        optionsContainer: { flexDirection: 'row', gap: theme.spacing.sm },
-        optionCard: { flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm, borderRadius: theme.borderRadius.md, borderWidth: 2, borderColor: c.border, backgroundColor: c.background, position: 'relative' },
-        optionCardActive: { borderColor: c.primary, backgroundColor: c.primary + '0D' },
-        radioIndicator: { position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: c.border, backgroundColor: c.surface, justifyContent: 'center', alignItems: 'center' },
-        radioIndicatorActive: { borderColor: c.primary, backgroundColor: c.primary },
-        iconCircle: { width: 48, height: 48, borderRadius: 24, backgroundColor: c.border + '80', justifyContent: 'center', alignItems: 'center', marginBottom: theme.spacing.sm, marginTop: theme.spacing.xs },
-        iconCircleActive: { backgroundColor: c.primary + '1A' },
-        optionLabel: { ...theme.typography.bodySmall, fontWeight: '600', color: c.textSecondary, textAlign: 'center' },
-        optionLabelActive: { color: c.text },
-        optionSublabel: { ...theme.typography.caption, color: c.textSecondary, marginTop: 2, textAlign: 'center' },
-        optionSublabelActive: { color: c.primary, fontWeight: '500' },
+        ...createRadioGroupStyles(c),
         themeHint: { ...theme.typography.caption, color: c.textSecondary, textAlign: 'center', marginTop: theme.spacing.md },
     });
 }

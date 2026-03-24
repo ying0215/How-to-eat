@@ -15,7 +15,8 @@ import {
     Modal, FlatList, Alert, KeyboardAvoidingView, Platform,
     ScrollView, ActivityIndicator,
 } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { PageHeader } from '../../src/components/common/PageHeader';
 import { theme } from '../../src/constants/theme';
 import type { ThemeColors, ThemeShadows } from '../../src/constants/theme';
 import { useThemeColors, useThemeShadows, useThemedStyles, useResolvedThemeMode } from '../../src/contexts/ThemeContext';
@@ -207,30 +208,14 @@ export default function FavoriteRotationScreen() {
 
     // ─── 自訂 Header（與 menu / favorites / settings 統一 3 欄式版面）───
     const renderHeader = () => (
-        <>
-            <View style={styles.customHeader}>
-                <Link href="/" asChild>
-                    <Pressable style={styles.backButton}>
-                        {({ pressed }) => (
-                            <View style={[styles.backButtonInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                                <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
-                                <Text style={styles.backText}>返回</Text>
-                            </View>
-                        )}
-                    </Pressable>
-                </Link>
-                <Text style={styles.customHeaderTitle}>最愛抽獎</Text>
-                <Pressable style={styles.headerRightBtn} onPress={() => router.push('/favorites')} accessibilityRole="button" accessibilityLabel="我的清單">
-                    {({ pressed }) => (
-                        <View style={[styles.headerRightInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                            <Ionicons name="list-outline" size={20} color={colors.primary} />
-                            <Text style={styles.headerRightText}>清單</Text>
-                        </View>
-                    )}
-                </Pressable>
-            </View>
-            <View style={styles.divider} />
-        </>
+        <PageHeader
+            title="最愛抽獎"
+            backHref="/"
+            rightIcon="list-outline"
+            rightLabel="清單"
+            onRightPress={() => router.push('/favorites')}
+            rightAccessibilityLabel="我的清單"
+        />
     );
 
     // ─── 分類篩選 Chip 列（需求 3）───
@@ -470,54 +455,9 @@ function createStyles(c: ThemeColors, s: ThemeShadows) {
             backgroundColor: c.background,
             paddingTop: Platform.OS === 'web' ? 16 : 52,
         },
-        // ── 自訂 Header ──
-        customHeader: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            paddingHorizontal: 16,
-            paddingBottom: 16,
-        },
-        customHeaderTitle: {
-            ...theme.typography.h2,
-            color: c.text,
-        },
-        backButton: {
-            width: 80,
-        },
-        backButtonInner: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 4,
-        },
-        backText: {
-            ...theme.typography.body,
-            color: c.primary,
-            fontWeight: '500',
-        },
-        headerRightBtn: {
-            width: 80,
-            alignItems: 'flex-end',
-        },
-        headerRightInner: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 4,
-        },
-        headerRightText: {
-            ...theme.typography.body,
-            color: c.primary,
-            fontWeight: '500',
-        },
-        divider: {
-            height: 1,
-            backgroundColor: c.border,
-            marginHorizontal: 16,
-            marginBottom: 12,
-        },
         // ── 分類 Chip（需求 3）──
         chipScroll: {
-            marginHorizontal: 16,
+            marginHorizontal: theme.spacing.md,
             marginBottom: theme.spacing.sm,
             maxHeight: 40,
         },
@@ -654,10 +594,10 @@ function createStyles(c: ThemeColors, s: ThemeShadows) {
         statusBadge: {
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 4,
+            gap: theme.spacing.xs,
             marginTop: theme.spacing.md,
             paddingHorizontal: theme.spacing.md,
-            paddingVertical: 4,
+            paddingVertical: theme.spacing.xs,
             borderRadius: theme.borderRadius.full,
             backgroundColor: c.background,
         },

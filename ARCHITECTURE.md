@@ -23,6 +23,9 @@ storage_keys:
   - key: "sync-meta-storage"
     store: useSyncMetaStore
     content: deviceId, syncVersion, lastSyncedAt, pendingSync, syncEnabled
+  - key: "user-preferences-storage"
+    store: useUserStore
+    content: transportMode, maxTimeMins, themeMode
 
 # ──── Env Variables ────
 env:
@@ -59,7 +62,7 @@ Stack Navigator（根）
 
 | 檔案 | 職責 | 讀取 Store | 依賴 Hook/Service |
 |------|------|------------|-------------------|
-| `_layout.tsx` | 根 Layout — GestureHandler → ThemeProvider → Stack。初始化 Google Auth + 同步排程器 | — | `useGoogleAuth`, `useSyncOrchestrator` |
+| `_layout.tsx` | 根 Layout — GestureHandler → AppThemeProvider → (RootLayoutInner: React Navigation ThemeProvider → Stack)。初始化 Google Auth + 同步排程器。Web Pointer-Events 修復 | — | `useGoogleAuth`, `useSyncOrchestrator`, `AppThemeProvider`, `useResolvedThemeMode` |
 | `+html.tsx` | Web HTML 模板（`lang="zh-TW"`） | — | — |
 | `index.tsx` | 首頁入口：「隨機抽取」+「找最近的」按鈕，☰ → menu，Avatar → auth 狀態 | `useGoogleAuthStore` | — |
 | `menu.tsx` | 功能清單：帳號卡片 + MenuItem（❤ 最愛清單 / ⚙ 偏好設定） | `useGoogleAuthStore`, `useSyncMetaStore` | `useGoogleAuth` |
@@ -107,6 +110,12 @@ Stack Navigator（根）
 4. 網路恢復（若 `pendingSync === true`）
 5. 手動觸發
 
+### `src/contexts/` — React Context 上下文層
+
+| 檔案 | 職責 | 暴露 API |
+|------|------|----------|
+| `ThemeContext.tsx` | 動態主題上下文 — 根據 `useUserStore.themeMode` + 系統色彩(useColorScheme) 決定 Light/Dark 主題，提供 colors/shadows/resolvedMode | `AppThemeProvider`, `useThemeColors()`, `useThemeShadows()`, `useResolvedThemeMode()`, `useThemedStyles(factory)` |
+
 ### `src/hooks/` — 業務邏輯橋接層
 
 | 檔案 | 職責 | 暴露 API |
@@ -149,6 +158,7 @@ Stack Navigator（根）
 | `common/Button.tsx` | 通用按鈕 |
 | `common/Card.tsx` | 通用卡片容器 |
 | `common/Loader.tsx` | 載入指示器（全螢幕/自訂訊息） |
+| `common/PageHeader.tsx` | 統一頁面 Header（3 欄式：返回 + 標題 + 右側動作）— settings / menu / random / favorites 共用 |
 | `features/AddFavoriteModal.tsx` | 新增餐廳 Modal（搜尋/手動/貼上連結） — P2, P4b 共用 |
 | `features/FilterModal.tsx` | 附近餐廳篩選 Modal |
 | `features/RestaurantCard.tsx` | 餐廳資訊卡片（名稱/分類/評分/距離/營業狀態） |
@@ -211,10 +221,14 @@ interface FavoriteState {
 // 2. 已刪除記錄遷移：string[] → DeletedItemRecord[]（補 deletedAt）
 
 // ═══ useUserStore ═══
-// 無持久化（每次 App 啟動重置）
+// persist → AsyncStorage["user-preferences-storage"]
 interface UserState {
   transportMode: 'walk' | 'drive' | 'transit'
   maxTimeMins: number  // 5–60, 步進 5
+  themeMode: ThemeMode  // 'light' | 'dark' | 'system'
+  setTransportMode(mode: 'walk' | 'drive' | 'transit'): void
+  setMaxTimeMins(mins: number): void
+  setThemeMode(mode: ThemeMode): void
 }
 
 // ═══ useGoogleAuthStore ═══
@@ -342,7 +356,8 @@ flowchart TD
 ```
 useFavoriteStore 變更 → Zustand persist → AsyncStorage["favorite-restaurant-storage"]
 useSyncMetaStore 變更 → Zustand persist → AsyncStorage["sync-meta-storage"]
-App 重啟 → rehydrate → UI 無縫恢復
+useUserStore   變更 → Zustand persist → AsyncStorage["user-preferences-storage"]
+App 重啟 → rehydrate → UI 無縫恢復（偏好設定+最愛清單+同步狀態）
 ```
 
 ---
@@ -375,9 +390,10 @@ App 重啟 → rehydrate → UI 無縫恢復
 ## 7. Rules（分層邊界）
 
 ```
-app/        → 僅 import hooks/, store/, components/
+app/        → 僅 import hooks/, store/, components/, contexts/
+contexts/   → 可 import constants/, store/（提供主題上下文）
 hooks/      → 可 import services/, store/
-components/ → 僅接受 Props，不 import services/, store/
+components/ → 僅接受 Props + contexts/（useThemeColors 等），不 import services/, store/
 store/      → 不 import services/
 ⚠️ EXCEPTION: nearest.tsx → restaurantService.clearCache()（命令式操作，允許）
 ```
@@ -430,6 +446,7 @@ store/      → 不 import services/
 
 ## 10. Changelog
 
+- **v1.8 (2026-03-24)**: 架構驅動優化同步：新增 contexts/ File Registry、修正 useUserStore 持久化描述 (persist + themeMode)、更新 _layout.tsx Provider 架構、補齊 storage_keys、分層規則納入 contexts/
 - **v1.7 (2026-03-23)**: 架構文件 AI-First 最佳化：Frontmatter 元資料、File Registry 表格、TypeScript Store Schema、Mermaid Data Flow、Rules 區塊
 - **v1.6 (2026-03-23)**: 架構文件反向同步：P4 拆為 P4a/P4b、Slices 重構標記完成、補齊遺漏模組與測試
 - **v1.5 (2026-03-23)**: 新增匯出/匯入功能
@@ -439,4 +456,4 @@ store/      → 不 import services/
 
 ---
 
-*Last updated: 2026-03-23*
+*Last updated: 2026-03-24*

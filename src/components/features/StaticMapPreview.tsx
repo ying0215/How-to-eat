@@ -17,6 +17,9 @@
 
 import React, { useState, useCallback } from 'react';
 import { View, Image, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { theme } from '../../constants/theme';
+import type { ThemeColors } from '../../constants/theme';
+import { useThemeColors, useThemedStyles } from '../../contexts/ThemeContext';
 
 // ── 設定常數 ─────────────────────────────────────────────────────────────────
 
@@ -122,6 +125,8 @@ export const StaticMapPreview: React.FC<StaticMapPreviewProps> = ({
 }) => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<boolean>(false);
+    const colors = useThemeColors();
+    const styles = useThemedStyles((c) => createMapStyles(c));
 
     const handleLoad = useCallback(() => {
         setLoading(false);
@@ -165,7 +170,7 @@ export const StaticMapPreview: React.FC<StaticMapPreviewProps> = ({
         <View style={[styles.container, { width, height }]}>
             {loading && (
                 <View style={[styles.loadingOverlay, { width, height }]}>
-                    <ActivityIndicator size="small" color="#666" />
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
                     <Text style={styles.loadingText}>載入地圖...</Text>
                 </View>
             )}
@@ -181,55 +186,60 @@ export const StaticMapPreview: React.FC<StaticMapPreviewProps> = ({
     );
 };
 
-// ── 樣式 ────────────────────────────────────────────────────────────────────
+// ── 動態樣式工廠 ──────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-    container: {
-        borderRadius: 12,
-        overflow: 'hidden',
-        backgroundColor: '#f0f0f0',
-        position: 'relative',
-    },
-    mapImage: {
-        borderRadius: 12,
-    },
-    loadingOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#f0f0f0',
-        zIndex: 1,
-        borderRadius: 12,
-    },
-    loadingText: {
-        marginTop: 6,
-        fontSize: 12,
-        color: '#888',
-    },
-    fallbackContainer: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#f5f5f5',
-        borderWidth: 1,
-        borderColor: '#e0e0e0',
-        borderStyle: 'dashed',
-        paddingHorizontal: 16,
-    },
-    fallbackIcon: {
-        fontSize: 24,
-        marginBottom: 6,
-    },
-    fallbackText: {
-        fontSize: 13,
-        color: '#555',
-        textAlign: 'center',
-        lineHeight: 18,
-    },
-    fallbackHint: {
-        fontSize: 11,
-        color: '#aaa',
-        marginTop: 4,
-    },
-});
+function createMapStyles(c: ThemeColors) {
+    return StyleSheet.create({
+        container: {
+            borderRadius: theme.borderRadius.md,
+            overflow: 'hidden',
+            backgroundColor: c.placeholder,
+            position: 'relative',
+        },
+        mapImage: {
+            borderRadius: theme.borderRadius.md,
+        },
+        loadingOverlay: {
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: c.placeholder,
+            zIndex: 1,
+            borderRadius: theme.borderRadius.md,
+        },
+        loadingText: {
+            marginTop: theme.spacing.xs + 2,
+            ...theme.typography.caption,
+            color: c.textSecondary,
+        },
+        fallbackContainer: {
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: c.background,
+            borderWidth: 1,
+            borderColor: c.border,
+            borderStyle: 'dashed',
+            paddingHorizontal: theme.spacing.md,
+        },
+        fallbackIcon: {
+            fontSize: 24,
+            marginBottom: theme.spacing.xs + 2,
+        },
+        fallbackText: {
+            ...theme.typography.bodySmall,
+            fontSize: 13,
+            color: c.textSecondary,
+            textAlign: 'center',
+            lineHeight: 18,
+        },
+        fallbackHint: {
+            ...theme.typography.caption,
+            fontSize: 11,
+            color: c.textSecondary,
+            marginTop: theme.spacing.xs,
+        },
+    });
+}
+

@@ -14,15 +14,15 @@ storage_keys:
   - key: "how-to-eat-favorites.json"
     store: Google Drive appDataFolder
     content: "SyncableFavoriteState (餐廳清單、輪替佇列與 metadata)"
-  - key: "favorite-storage"
+  - key: "favorite-restaurant-storage"
     store: AsyncStorage
     content: "FavoriteStore 狀態"
   - key: "sync-meta-storage"
     store: AsyncStorage
     content: "SyncMetaStore 狀態"
-  - key: "user-storage"
+  - key: "user-preferences-storage"
     store: AsyncStorage
-    content: "使用者偏好設定"
+    content: "使用者偏好設定 (transportMode, maxTimeMins, themeMode)"
 
 # ──── Env Variables ────
 env:
@@ -153,24 +153,40 @@ sequenceDiagram
 // persist → Google Drive appDataFolder (how-to-eat-favorites.json)
 interface SyncableFavoriteState {
   // ── State ──
-  favorites: SyncableFavorite[]  // 所有餐廳 (包含軟刪除的墓碑紀錄)
-  queue: string[]                // 推薦佇列排序
-  currentDailyId: string | null  // 今日推薦
-  lastUpdateDate: string         // YYYY-MM-DD
+  favorites: SyncableFavorite[]    // 所有餐廳 (包含軟刪除的墓碑紀錄)
+  groups: SyncableGroup[]          // 所有群組 (包含 tombstone)
+  activeGroupId: string            // 啟用中的群組
+  groupQueues: Record<groupId, string[]>          // 各群組輪替佇列
+  groupCurrentDailyIds: Record<groupId, string | null> // 各群組今日推薦
+  lastUpdateDate: string           // YYYY-MM-DD
   
   // ── Sync Metadata ──
-  _syncVersion: number           // 單調遞增，每次變更 +1
-  _lastSyncedAt: string          // ISO 時間戳
-  _deviceId: string              // 本裝置 ID
+  _syncVersion: number             // 單調遞增，每次變更 +1
+  _lastSyncedAt: string            // ISO 時間戳
+  _deviceId: string                // 本裝置 ID
 }
 
 interface SyncableFavorite {
   id: string
   name: string
   note?: string
+  address?: string
+  category?: string
+  placeId?: string
+  latitude?: number
+  longitude?: number
+  groupId: string                  // 所屬群組
   createdAt: string
-  updatedAt: string              // 取最新時間 (LWW)
-  isDeleted: boolean             // tombstone 標記
+  updatedAt: string                // 取最新時間 (LWW)
+  isDeleted: boolean               // tombstone 標記
+}
+
+interface SyncableGroup {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  isDeleted: boolean               // tombstone 標記
 }
 ```
 
@@ -236,25 +252,42 @@ stateDiagram-v2
 
 ```typescript
 // ═══ FavoriteState ═══
-// persist → AsyncStorage["favorite-storage"]
+// persist → AsyncStorage["favorite-restaurant-storage"]
+// Slices Pattern: createFavoriteSlice + createGroupSlice + createQueueSlice
 interface FavoriteState {
     // ── State ──
-    favorites: FavoriteRestaurant[]    // 僅包含存活餐廳 (已剔除 tombstone)
-    queue: string[]                    // 當前輪替池
-    currentDailyId: string | null
-    lastUpdateDate: string
+    favorites: FavoriteRestaurant[]                    // 僅包含存活餐廳 (已剔除 tombstone)
+    groups: FavoriteGroup[]                            // 最多 MAX_GROUPS=10 個群組
+    activeGroupId: string                              // 啟用中的群組 ID
+    groupQueues: Record<groupId, string[]>             // 各群組輪替佇列
+    groupCurrentDailyIds: Record<groupId, string|null> // 各群組今日推薦
+    lastUpdateDate: string                             // YYYY-MM-DD
+    _deletedFavoriteIds: DeletedItemRecord[]            // tombstone 用（{id, deletedAt}）
+    _deletedGroupIds: DeletedItemRecord[]               // tombstone 用
 
-    // ── Actions ──
-    addFavorite(name: string, note?: string): void    
-    removeFavorite(id: string): void                
-    updateFavoriteNote(id: string, note: string): void 
-    skipCurrent(): void                             
-    checkDaily(): void                              
+    // ── Actions (Slices) ──
+    addFavorite(name: string, note?: string, extra?: {...}): void
+    removeFavorite(id: string): void
+    updateFavoriteName(id: string, name: string): void
+    updateFavoriteNote(id: string, note: string): void
+    createGroup(name?: string): FavoriteGroup | null
+    renameGroup(id: string, name: string): void
+    deleteGroup(id: string): boolean
+    setActiveGroup(id: string): void
+    skipCurrent(): void
+    checkDaily(): void
+    reorderQueue(newOrder: string[]): void
+    findDuplicate(name: string, placeId?: string): FavoriteRestaurant | null
 }
 ```
 
 ## 7. 未來深化方向
 
 - **E2E 測試**: 串接真實帳號完整驗證同步。
-- **匯出 / 匯入**: 提供 JSON 匯出及還原。
 - **端到端加密**: 採用 AES 加密 `SyncableFavoriteState`，保障雲端資料完全不透明。
+- **衝突解決 UI**: 當 LWW 合併產生衝突時，提供使用者手動選擇的介面。
+- **同步歷史紀錄**: 記錄近 N 次同步事件，提供診斷與回滾能力。
+
+---
+
+*Last updated: 2026-03-24*

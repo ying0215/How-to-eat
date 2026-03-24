@@ -5,6 +5,7 @@
 import { View, Text, StyleSheet, Platform, Alert, ActivityIndicator } from 'react-native';
 import { Link } from 'expo-router';
 import { Pressable } from 'react-native';
+import { PageHeader } from '../src/components/common/PageHeader';
 import { theme } from '../src/constants/theme';
 import type { ThemeColors, ThemeShadows } from '../src/constants/theme';
 import { useThemeColors, useThemeShadows, useThemedStyles, useResolvedThemeMode } from '../src/contexts/ThemeContext';
@@ -90,22 +91,7 @@ export default function MenuScreen() {
         <View style={styles.container}>
             <StatusBar style={resolvedMode === 'dark' ? 'light' : 'dark'} />
 
-            <View style={styles.header}>
-                <Link href="/" asChild>
-                    <Pressable style={styles.backButton}>
-                        {({ pressed }) => (
-                            <View style={[styles.backButtonInner, pressed && { opacity: theme.interaction.pressedOpacity }]}>
-                                <Ionicons name="arrow-back-outline" size={20} color={colors.primary} />
-                                <Text style={styles.backText}>返回</Text>
-                            </View>
-                        )}
-                    </Pressable>
-                </Link>
-                <Text style={styles.headerTitle}>功能清單</Text>
-                <View style={styles.backButton} />
-            </View>
-
-            <View style={styles.divider} />
+            <PageHeader title="功能清單" backHref="/" />
 
             <View style={styles.menuList}>
                 {isSignedIn ? (
@@ -221,12 +207,6 @@ export default function MenuScreen() {
 function createMenuStyles(c: ThemeColors, s: ThemeShadows) {
     return StyleSheet.create({
         container: { flex: 1, backgroundColor: c.background, paddingTop: Platform.OS === 'web' ? 16 : 52 },
-        header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.md, paddingBottom: theme.spacing.md },
-        headerTitle: { ...theme.typography.h2, color: c.text },
-        backButton: { width: 80 },
-        backButtonInner: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
-        backText: { ...theme.typography.body, color: c.primary, fontWeight: '500' },
-        divider: { height: 1, backgroundColor: c.border, marginHorizontal: theme.spacing.md, marginBottom: theme.spacing.sm + 4 },
         menuList: { flex: 1, paddingHorizontal: theme.spacing.md, gap: theme.spacing.xs },
         menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.md, borderRadius: theme.borderRadius.md, gap: theme.spacing.md },
         menuItemPressed: { backgroundColor: c.surface },
